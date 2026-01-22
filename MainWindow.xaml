@@ -1,0 +1,166 @@
+<Window x:Class="JiraWorklogViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Jira Worklog Viewer" Height="600" Width="900"
+        WindowStartupLocation="CenterScreen"
+        Icon="app.ico">
+    
+    <Window.Resources>
+        <Style x:Key="HeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+        </Style>
+        
+        <Style x:Key="GroupHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="#2563EB"/>
+        </Style>
+        
+        <Style x:Key="TotalTimeStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#059669"/>
+            <Setter Property="Margin" Value="10,0,0,0"/>
+        </Style>
+    </Window.Resources>
+    
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Credentials Panel -->
+        <GroupBox Grid.Row="0" Header="Jira Credentials" Margin="0,0,0,10">
+            <Grid Margin="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Server URL:" VerticalAlignment="Center" Margin="0,0,5,5"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="txtServerUrl" Margin="0,0,10,5" 
+                         ToolTip="e.g., https://yourcompany.atlassian.net"/>
+                
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="Email:" VerticalAlignment="Center" Margin="0,0,5,5"/>
+                <TextBox Grid.Row="0" Grid.Column="3" x:Name="txtEmail" Margin="0,0,10,5"/>
+                
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="API Token:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <PasswordBox Grid.Row="1" Grid.Column="1" x:Name="txtApiToken" Margin="0,0,10,0"/>
+                
+                <StackPanel Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Orientation="Horizontal">
+                    <Button x:Name="btnSaveCredentials" Content="Save &amp; Connect" Width="100" Margin="0,0,5,0"
+                            Click="BtnSaveCredentials_Click"/>
+                    <Button x:Name="btnClearCredentials" Content="Clear" Width="60"
+                            Click="BtnClearCredentials_Click"/>
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+        
+        <!-- Main Content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            
+            <!-- Worklogs List -->
+            <GroupBox Grid.Column="0" Header="Worklogs">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    
+                    <!-- Date Filter -->
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
+                        <TextBlock Text="From:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <DatePicker x:Name="dpFromDate" Width="120" Margin="0,0,10,0"/>
+                        <TextBlock Text="To:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <DatePicker x:Name="dpToDate" Width="120" Margin="0,0,10,0"/>
+                        <Button x:Name="btnFetch" Content="Fetch Worklogs" Padding="10,3"
+                                Click="BtnFetch_Click"/>
+                    </StackPanel>
+                    
+                    <!-- Worklogs TreeView -->
+                    <TreeView Grid.Row="1" x:Name="tvWorklogs" Margin="5"
+                              SelectedItemChanged="TvWorklogs_SelectedItemChanged">
+                        <TreeView.ItemTemplate>
+                            <HierarchicalDataTemplate ItemsSource="{Binding Worklogs}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding DateDisplay}" Style="{StaticResource GroupHeaderStyle}"/>
+                                    <TextBlock Text="{Binding TotalTime}" Style="{StaticResource TotalTimeStyle}"/>
+                                </StackPanel>
+                                <HierarchicalDataTemplate.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding StartedTimeOnly}" Foreground="Gray" Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding IssueKey}" FontWeight="SemiBold" Margin="0,0,5,0"/>
+                                            <TextBlock Text="-" Margin="0,0,5,0"/>
+                                            <TextBlock Text="{Binding IssueSummary}" MaxWidth="250" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding TimeSpent}" Foreground="#059669" Margin="8,0,0,0"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </HierarchicalDataTemplate.ItemTemplate>
+                            </HierarchicalDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                </Grid>
+            </GroupBox>
+            
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"/>
+            
+            <!-- Worklog Details -->
+            <GroupBox Grid.Column="2" Header="Worklog Details">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Issue:" FontWeight="Bold" Margin="0,0,10,8"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="txtDetailIssue" Margin="0,0,0,8"/>
+                    
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Summary:" FontWeight="Bold" Margin="0,0,10,8"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="txtDetailSummary" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                    
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Date:" FontWeight="Bold" Margin="0,0,10,8"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" x:Name="txtDetailDate" Margin="0,0,0,8"/>
+                    
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Time Spent:" FontWeight="Bold" Margin="0,0,10,8"/>
+                    <TextBlock Grid.Row="3" Grid.Column="1" x:Name="txtDetailTimeSpent" Foreground="#059669" Margin="0,0,0,8"/>
+                    
+                    <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Text="Notes:" FontWeight="Bold" Margin="0,0,0,5"/>
+                    <TextBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="txtDetailNotes" 
+                             IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"/>
+                </Grid>
+            </GroupBox>
+        </Grid>
+        
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="2" Margin="0,10,0,0">
+            <StatusBarItem>
+                <TextBlock x:Name="txtStatus" Text="Ready"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>
