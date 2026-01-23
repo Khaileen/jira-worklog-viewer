@@ -24,12 +24,12 @@ namespace JiraWorklogViewer.Services
         public void SetCredentials(JiraCredentials credentials)
         {
             _baseUrl = credentials.ServerUrl.TrimEnd('/');
-            
+
             var authString = string.Format("{0}:{1}", credentials.Email, credentials.ApiToken);
             var authBytes = Encoding.UTF8.GetBytes(authString);
             var authBase64 = Convert.ToBase64String(authBytes);
 
-            _httpClient.DefaultRequestHeaders.Authorization = 
+            _httpClient.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Basic", authBase64);
             _httpClient.DefaultRequestHeaders.Accept.Clear();
             _httpClient.DefaultRequestHeaders.Accept.Add(
@@ -56,16 +56,27 @@ namespace JiraWorklogViewer.Services
             }
         }
 
-        public async Task<List<WorklogGroup>> GetMyWorklogsAsync(DateTime fromDate, DateTime toDate)
+        public async Task<List<WorklogGroup>> GetMyWorklogsAsync(DateTime? fromDate, DateTime? toDate, string ticketKey = null)
         {
             var worklogs = new List<WorklogEntry>();
 
-            // Search for issues where current user has logged work
-            // Using worklogAuthor to find issues with our worklogs
-            var jql = string.Format(
-                "worklogAuthor = currentUser() AND worklogDate >= \"{0}\" AND worklogDate <= \"{1}\" ORDER BY updated DESC",
-                fromDate.ToString("yyyy-MM-dd"),
-                toDate.ToString("yyyy-MM-dd"));
+            // Build JQL based on filters
+            var jqlParts = new List<string>();
+            jqlParts.Add("worklogAuthor = currentUser()");
+
+            if (!string.IsNullOrWhiteSpace(ticketKey))
+            {
+                // Exact match on ticket key
+                jqlParts.Add(string.Format("key = \"{0}\"", ticketKey.Trim()));
+            }
+
+            if (fromDate.HasValue && toDate.HasValue)
+            {
+                jqlParts.Add(string.Format("worklogDate >= \"{0}\"", fromDate.Value.ToString("yyyy-MM-dd")));
+                jqlParts.Add(string.Format("worklogDate <= \"{0}\"", toDate.Value.ToString("yyyy-MM-dd")));
+            }
+
+            string jql = string.Join(" AND ", jqlParts) + " ORDER BY updated DESC";
 
             var searchUrl = string.Format(
                 "{0}/rest/api/3/search/jql?jql={1}&fields=summary,worklog&maxResults=100",
@@ -73,7 +84,7 @@ namespace JiraWorklogViewer.Services
                 Uri.EscapeDataString(jql));
 
             var response = await _httpClient.GetAsync(searchUrl);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
@@ -99,9 +110,17 @@ namespace JiraWorklogViewer.Services
                         wl.IssueKey = issue.key;
                         wl.IssueSummary = issue.fields.summary;
                     }
-                    worklogs.AddRange(issueWorklogs.Where(w => 
-                        w.Started.Date >= fromDate.Date && 
-                        w.Started.Date <= toDate.Date));
+
+                    // Apply date filter if specified
+                    if (fromDate.HasValue && toDate.HasValue)
+                    {
+                        worklogs.AddRange(issueWorklogs.Where(w =>
+                            w.Started.Date >= fromDate.Value.Date && w.Started.Date <= toDate.Value.Date));
+                    }
+                    else
+                    {
+                        worklogs.AddRange(issueWorklogs);
+                    }
                 }
                 else if (issue.fields.worklog != null && issue.fields.worklog.worklogs != null)
                 {
@@ -111,7 +130,16 @@ namespace JiraWorklogViewer.Services
                         if (wl.author.accountId == _currentUserAccountId)
                         {
                             var entry = ConvertToWorklogEntry(wl, issue.key, issue.fields.summary);
-                            if (entry.Started.Date >= fromDate.Date && entry.Started.Date <= toDate.Date)
+
+                            // Apply date filter if specified
+                            if (fromDate.HasValue && toDate.HasValue)
+                            {
+                                if (entry.Started.Date >= fromDate.Value.Date && entry.Started.Date <= toDate.Value.Date)
+                                {
+                                    worklogs.Add(entry);
+                                }
+                            }
+                            else
                             {
                                 worklogs.Add(entry);
                             }
@@ -126,9 +154,10 @@ namespace JiraWorklogViewer.Services
         private async Task<List<WorklogEntry>> GetWorklogsForIssueAsync(string issueKey)
         {
             var entries = new List<WorklogEntry>();
-            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog", _baseUrl, issueKey);
 
+            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog", _baseUrl, issueKey);
             var response = await _httpClient.GetAsync(url);
+
             if (!response.IsSuccessStatusCode)
             {
                 return entries;

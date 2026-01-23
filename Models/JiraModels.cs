@@ -25,7 +25,10 @@ namespace JiraWorklogViewer.Models
         {
             get
             {
-                return string.Format("{0} - {1} ({2})", IssueKey, IssueSummary, TimeSpent);
+                return string.Format("{0} - {1} ({2})", 
+                    IssueKey ?? "(Unknown)", 
+                    IssueSummary ?? "(No summary)", 
+                    TimeSpent ?? "0m");
             }
         }
 
@@ -43,11 +46,14 @@ namespace JiraWorklogViewer.Models
     public class WorklogGroup
     {
         public DateTime Date { get; set; }
+
         public string DateDisplay
         {
             get { return Date.ToString("dddd, MMMM dd, yyyy"); }
         }
+
         public List<WorklogEntry> Worklogs { get; set; }
+
         public string TotalTime
         {
             get

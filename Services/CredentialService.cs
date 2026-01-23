@@ -16,14 +16,14 @@ namespace JiraWorklogViewer.Services
         {
             var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var appFolder = Path.Combine(appDataPath, "JiraWorklogViewer");
-            
+
             if (!Directory.Exists(appFolder))
             {
                 Directory.CreateDirectory(appFolder);
             }
 
             _credentialsFilePath = Path.Combine(appFolder, "credentials.dat");
-            
+
             // Use machine-specific entropy for additional security
             _entropy = Encoding.UTF8.GetBytes(Environment.MachineName + "JiraWorklogViewer");
         }
@@ -32,10 +32,10 @@ namespace JiraWorklogViewer.Services
         {
             var json = JsonConvert.SerializeObject(credentials);
             var plainBytes = Encoding.UTF8.GetBytes(json);
-            
+
             // Use DPAPI for encryption (Windows Data Protection API)
             var encryptedBytes = ProtectedData.Protect(plainBytes, _entropy, DataProtectionScope.CurrentUser);
-            
+
             File.WriteAllBytes(_credentialsFilePath, encryptedBytes);
         }
 
@@ -51,7 +51,7 @@ namespace JiraWorklogViewer.Services
                 var encryptedBytes = File.ReadAllBytes(_credentialsFilePath);
                 var plainBytes = ProtectedData.Unprotect(encryptedBytes, _entropy, DataProtectionScope.CurrentUser);
                 var json = Encoding.UTF8.GetString(plainBytes);
-                
+
                 return JsonConvert.DeserializeObject<JiraCredentials>(json);
             }
             catch
