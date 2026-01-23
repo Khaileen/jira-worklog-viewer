@@ -1,0 +1,74 @@
+<Window x:Class="JiraWorklogViewer.AddWorklogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add Worklog"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip"
+        Icon="app.ico">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="100"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Ticket Key -->
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Ticket Key:" 
+                   VerticalAlignment="Center" Margin="0,0,10,10"/>
+        <TextBox Grid.Row="0" Grid.Column="1" x:Name="txtTicketKey" 
+                 Margin="0,0,0,10"
+                 ToolTip="e.g., CRM-1234"/>
+
+        <!-- Date -->
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Date:" 
+                   VerticalAlignment="Center" Margin="0,0,10,10"/>
+        <DatePicker Grid.Row="1" Grid.Column="1" x:Name="dpDate" 
+                    Margin="0,0,0,10"/>
+
+        <!-- Time Started -->
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Started At:" 
+                   VerticalAlignment="Center" Margin="0,0,10,10"/>
+        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <ComboBox x:Name="cboHour" Width="60" Margin="0,0,5,0"/>
+            <TextBlock Text=":" VerticalAlignment="Center" Margin="0,0,5,0"/>
+            <ComboBox x:Name="cboMinute" Width="60"/>
+        </StackPanel>
+
+        <!-- Time Spent -->
+        <TextBlock Grid.Row="3" Grid.Column="0" Text="Time Spent:" 
+                   VerticalAlignment="Center" Margin="0,0,10,10"/>
+        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBox x:Name="txtTimeSpent" Width="100" 
+                     ToolTip="e.g., 1h 30m, 2h, 45m"/>
+            <TextBlock Text="(e.g., 1h 30m)" VerticalAlignment="Center" 
+                       Foreground="Gray" Margin="10,0,0,0"/>
+        </StackPanel>
+
+        <!-- Comment -->
+        <TextBlock Grid.Row="4" Grid.Column="0" Text="Comment:" 
+                   VerticalAlignment="Top" Margin="0,0,10,10"/>
+        <TextBox Grid.Row="4" Grid.Column="1" x:Name="txtComment" 
+                 Margin="0,0,0,10"
+                 AcceptsReturn="True"
+                 AcceptsTab="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"/>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" 
+                    Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnSave" Content="Save" Width="80" Margin="0,0,10,0"
+                    Click="BtnSave_Click" IsDefault="True"/>
+            <Button x:Name="btnCancel" Content="Cancel" Width="80"
+                    Click="BtnCancel_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

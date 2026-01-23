@@ -328,5 +328,444 @@ namespace JiraWorklogViewer.Services
                 })
                 .ToList();
         }
+
+        public async Task<WorklogEntry> CreateWorklogAsync(string issueKey, DateTime started, string timeSpent, string comment)
+        {
+            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog", _baseUrl, issueKey);
+
+            // Build the request body
+            object commentAdf = null;
+            if (!string.IsNullOrEmpty(comment))
+            {
+                commentAdf = ConvertToAdfSafe(comment);
+            }
+
+            var worklogData = new Dictionary<string, object>
+            {
+                { "started", started.ToString("yyyy-MM-ddTHH:mm:ss.fffzz00") },
+                { "timeSpent", timeSpent }
+            };
+
+            if (commentAdf != null)
+            {
+                worklogData["comment"] = commentAdf;
+            }
+
+            var jsonContent = JsonConvert.SerializeObject(worklogData, 
+                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync(url, content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                var friendlyMessage = ParseJiraError(errorContent, response.StatusCode);
+                throw new Exception(friendlyMessage);
+            }
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            var createdWorklog = JsonConvert.DeserializeObject<JiraWorklog>(responseJson);
+
+            // Get the issue summary for display
+            string issueSummary = await GetIssueSummaryAsync(issueKey);
+
+            return ConvertToWorklogEntry(createdWorklog, issueKey, issueSummary);
+        }
+
+        public async Task<WorklogEntry> UpdateWorklogAsync(string issueKey, string worklogId, DateTime started, string timeSpent, string comment)
+        {
+            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog/{2}", _baseUrl, issueKey, worklogId);
+
+            // Build the request body
+            object commentAdf = null;
+            if (!string.IsNullOrEmpty(comment))
+            {
+                commentAdf = ConvertToAdfSafe(comment);
+            }
+
+            var worklogData = new Dictionary<string, object>
+            {
+                { "started", started.ToString("yyyy-MM-ddTHH:mm:ss.fffzz00") },
+                { "timeSpent", timeSpent }
+            };
+
+            if (commentAdf != null)
+            {
+                worklogData["comment"] = commentAdf;
+            }
+
+            var jsonContent = JsonConvert.SerializeObject(worklogData,
+                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            var request = new HttpRequestMessage(HttpMethod.Put, url);
+            request.Content = content;
+
+            var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                var friendlyMessage = ParseJiraError(errorContent, response.StatusCode);
+                throw new Exception(friendlyMessage);
+            }
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            var updatedWorklog = JsonConvert.DeserializeObject<JiraWorklog>(responseJson);
+
+            // Get the issue summary for display
+            string issueSummary = await GetIssueSummaryAsync(issueKey);
+
+            return ConvertToWorklogEntry(updatedWorklog, issueKey, issueSummary);
+        }
+
+        public async Task DeleteWorklogAsync(string issueKey, string worklogId)
+        {
+            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog/{2}", _baseUrl, issueKey, worklogId);
+
+            var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                var friendlyMessage = ParseJiraError(errorContent, response.StatusCode);
+                throw new Exception(friendlyMessage);
+            }
+        }
+
+        private const int MaxCommentLength = 5000;
+        private const int MaxCommentLines = 100;
+
+        private object ConvertToAdfSafe(string text)
+        {
+            // For very long comments or too many lines, use simple plain text to avoid ADF complexity issues
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            
+            if (text.Length > MaxCommentLength || lines.Length > MaxCommentLines)
+            {
+                return ConvertToPlainTextAdf(text);
+            }
+
+            try
+            {
+                return ConvertToAdf(text);
+            }
+            catch
+            {
+                // Fallback to plain text if ADF conversion fails
+                return ConvertToPlainTextAdf(text);
+            }
+        }
+
+        private object ConvertToPlainTextAdf(string text)
+        {
+            // Split into paragraphs and create simple ADF structure
+            var paragraphs = text.Replace("\r\n", "\n").Split(new[] { "\n\n" }, StringSplitOptions.None);
+            var content = new List<object>();
+
+            foreach (var para in paragraphs)
+            {
+                if (string.IsNullOrWhiteSpace(para)) continue;
+
+                // Replace single newlines with hardBreak for line preservation
+                var lines = para.Split('\n');
+                var paraContent = new List<object>();
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (!string.IsNullOrEmpty(lines[i]))
+                    {
+                        paraContent.Add(new Dictionary<string, object>
+                        {
+                            { "type", "text" },
+                            { "text", lines[i] }
+                        });
+                    }
+
+                    if (i < lines.Length - 1)
+                    {
+                        paraContent.Add(new Dictionary<string, object>
+                        {
+                            { "type", "hardBreak" }
+                        });
+                    }
+                }
+
+                if (paraContent.Count > 0)
+                {
+                    content.Add(new Dictionary<string, object>
+                    {
+                        { "type", "paragraph" },
+                        { "content", paraContent }
+                    });
+                }
+            }
+
+            if (content.Count == 0)
+            {
+                content.Add(new Dictionary<string, object>
+                {
+                    { "type", "paragraph" },
+                    { "content", new List<object>() }
+                });
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "type", "doc" },
+                { "version", 1 },
+                { "content", content }
+            };
+        }
+
+        private object ConvertToAdf(string text)
+        {
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            var content = new List<object>();
+            var listStack = new List<ListContext>();
+
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    // Empty line - close all lists and add empty paragraph
+                    CloseAllLists(listStack, content);
+                    continue;
+                }
+
+                // Count leading spaces/tabs for indentation
+                int indent = 0;
+                int charIndex = 0;
+                while (charIndex < line.Length && (line[charIndex] == ' ' || line[charIndex] == '\t'))
+                {
+                    indent += line[charIndex] == '\t' ? 2 : 1;
+                    charIndex++;
+                }
+                int indentLevel = indent / 2; // Every 2 spaces = 1 level
+
+                string trimmedLine = line.Substring(charIndex);
+
+                // Check for bullet list (- or *)
+                bool isBullet = false;
+                bool isOrdered = false;
+                string itemText = trimmedLine;
+
+                if (trimmedLine.StartsWith("- ") || trimmedLine.StartsWith("* "))
+                {
+                    isBullet = true;
+                    itemText = trimmedLine.Substring(2);
+                }
+                else
+                {
+                    // Check for numbered list (1. 2. etc)
+                    int dotIndex = trimmedLine.IndexOf(". ");
+                    if (dotIndex > 0 && dotIndex <= 3)
+                    {
+                        string numPart = trimmedLine.Substring(0, dotIndex);
+                        int num;
+                        if (int.TryParse(numPart, out num))
+                        {
+                            isOrdered = true;
+                            itemText = trimmedLine.Substring(dotIndex + 2);
+                        }
+                    }
+                }
+
+                if (isBullet || isOrdered)
+                {
+                    string listType = isBullet ? "bulletList" : "orderedList";
+
+                    // Close deeper lists
+                    while (listStack.Count > indentLevel + 1)
+                    {
+                        listStack.RemoveAt(listStack.Count - 1);
+                    }
+
+                    // If at same level but different list type, close and start new
+                    if (listStack.Count == indentLevel + 1 && listStack[indentLevel].Type != listType)
+                    {
+                        listStack.RemoveAt(listStack.Count - 1);
+                    }
+
+                    // Create new list at this level if needed
+                    if (listStack.Count <= indentLevel)
+                    {
+                        // Need to create lists up to this level
+                        while (listStack.Count <= indentLevel)
+                        {
+                            var newList = new Dictionary<string, object>
+                            {
+                                { "type", listType },
+                                { "content", new List<object>() }
+                            };
+
+                            if (listStack.Count == 0)
+                            {
+                                content.Add(newList);
+                            }
+                            else
+                            {
+                                // Add to parent list item
+                                var parentItems = (List<object>)listStack[listStack.Count - 1].List["content"];
+                                if (parentItems.Count > 0)
+                                {
+                                    var lastItem = (Dictionary<string, object>)parentItems[parentItems.Count - 1];
+                                    var lastItemContent = (List<object>)lastItem["content"];
+                                    lastItemContent.Add(newList);
+                                }
+                            }
+
+                            listStack.Add(new ListContext { Type = listType, List = newList });
+                        }
+                    }
+
+                    // Add list item
+                    var listItem = new Dictionary<string, object>
+                    {
+                        { "type", "listItem" },
+                        { "content", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "type", "paragraph" },
+                                    { "content", new List<object>
+                                        {
+                                            new Dictionary<string, object>
+                                            {
+                                                { "type", "text" },
+                                                { "text", itemText }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    var currentList = (List<object>)listStack[indentLevel].List["content"];
+                    currentList.Add(listItem);
+                }
+                else
+                {
+                    // Regular paragraph - close all lists first
+                    CloseAllLists(listStack, content);
+
+                    content.Add(new Dictionary<string, object>
+                    {
+                        { "type", "paragraph" },
+                        { "content", new List<object>
+                            {
+                                new Dictionary<string, object>
+                                {
+                                    { "type", "text" },
+                                    { "text", trimmedLine }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            CloseAllLists(listStack, content);
+
+            // If no content, add empty paragraph
+            if (content.Count == 0)
+            {
+                content.Add(new Dictionary<string, object>
+                {
+                    { "type", "paragraph" },
+                    { "content", new List<object>() }
+                });
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "type", "doc" },
+                { "version", 1 },
+                { "content", content }
+            };
+        }
+
+        private void CloseAllLists(List<ListContext> listStack, List<object> content)
+        {
+            listStack.Clear();
+        }
+
+        private class ListContext
+        {
+            public string Type { get; set; }
+            public Dictionary<string, object> List { get; set; }
+        }
+
+        private string ParseJiraError(string errorJson, System.Net.HttpStatusCode statusCode)
+        {
+            try
+            {
+                var errorResponse = JsonConvert.DeserializeObject<JiraErrorResponse>(errorJson);
+                
+                var messages = new List<string>();
+                
+                if (errorResponse.errorMessages != null && errorResponse.errorMessages.Count > 0)
+                {
+                    messages.AddRange(errorResponse.errorMessages);
+                }
+                
+                if (errorResponse.errors != null && errorResponse.errors.Count > 0)
+                {
+                    foreach (var kvp in errorResponse.errors)
+                    {
+                        messages.Add(string.Format("{0}: {1}", kvp.Key, kvp.Value));
+                    }
+                }
+
+                if (messages.Count > 0)
+                {
+                    return string.Join("\n", messages);
+                }
+            }
+            catch
+            {
+                // JSON parsing failed, fall through to default
+            }
+
+            // Fallback for non-JSON or unexpected format
+            if (statusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return "Issue not found or you don't have permission to access it.";
+            }
+            else if (statusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                return "Authentication failed. Please check your credentials.";
+            }
+            else if (statusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                return "You don't have permission to log work on this issue.";
+            }
+
+            return string.Format("Request failed ({0})", (int)statusCode);
+        }
+
+        private async Task<string> GetIssueSummaryAsync(string issueKey)
+        {
+            try
+            {
+                var url = string.Format("{0}/rest/api/3/issue/{1}?fields=summary", _baseUrl, issueKey);
+                var response = await _httpClient.GetAsync(url);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var issue = JsonConvert.DeserializeObject<JiraIssue>(json);
+                    return issue.fields != null ? issue.fields.summary : string.Empty;
+                }
+            }
+            catch
+            {
+                // Ignore errors, just return empty
+            }
+            return string.Empty;
+        }
     }
 }

@@ -137,4 +137,10 @@ namespace JiraWorklogViewer.Models
         public string emailAddress { get; set; }
         public string displayName { get; set; }
     }
+
+    public class JiraErrorResponse
+    {
+        public List<string> errorMessages { get; set; }
+        public Dictionary<string, string> errors { get; set; }
+    }
 }

@@ -14,10 +14,19 @@ namespace JiraWorklogViewer
         private readonly JiraService _jiraService;
         private readonly CredentialService _credentialService;
         private bool _isConnected;
+        private List<WorklogGroup> _worklogGroups = new List<WorklogGroup>();
 
         public MainWindow()
         {
             InitializeComponent();
+
+            // Set size to 25% of screen
+            var screenWidth = SystemParameters.PrimaryScreenWidth;
+            var screenHeight = SystemParameters.PrimaryScreenHeight;
+            Width = screenWidth * 0.5;  // 50% width for main window (needs more horizontal space)
+            Height = screenHeight * 0.5;
+            MinWidth = 800;
+            MinHeight = 500;
 
             _jiraService = new JiraService();
             _credentialService = new CredentialService();
@@ -29,6 +38,120 @@ namespace JiraWorklogViewer
             // Load stored credentials
             LoadStoredCredentials();
         }
+
+        #region Worklog List Helpers
+
+        private void AddWorklogToList(WorklogEntry worklog)
+        {
+            var group = _worklogGroups.FirstOrDefault(g => g.Date.Date == worklog.Started.Date);
+            
+            if (group == null)
+            {
+                // Create new group
+                group = new WorklogGroup
+                {
+                    Date = worklog.Started.Date,
+                    Worklogs = new List<WorklogEntry>()
+                };
+                _worklogGroups.Add(group);
+                _worklogGroups = _worklogGroups.OrderByDescending(g => g.Date).ToList();
+            }
+
+            group.Worklogs.Add(worklog);
+            group.Worklogs = group.Worklogs.OrderBy(w => w.Started).ToList();
+
+            RefreshWorklogDisplay();
+        }
+
+        private void UpdateWorklogInList(WorklogEntry updatedWorklog)
+        {
+            // Find and remove from old location
+            WorklogGroup oldGroup = null;
+            WorklogEntry oldEntry = null;
+
+            foreach (var group in _worklogGroups)
+            {
+                oldEntry = group.Worklogs.FirstOrDefault(w => w.Id == updatedWorklog.Id);
+                if (oldEntry != null)
+                {
+                    oldGroup = group;
+                    break;
+                }
+            }
+
+            if (oldGroup != null && oldEntry != null)
+            {
+                oldGroup.Worklogs.Remove(oldEntry);
+
+                // Remove group if empty
+                if (oldGroup.Worklogs.Count == 0)
+                {
+                    _worklogGroups.Remove(oldGroup);
+                }
+            }
+
+            // Add to correct location
+            AddWorklogToList(updatedWorklog);
+        }
+
+        private void RemoveWorklogFromList(string worklogId)
+        {
+            foreach (var group in _worklogGroups.ToList())
+            {
+                var entry = group.Worklogs.FirstOrDefault(w => w.Id == worklogId);
+                if (entry != null)
+                {
+                    group.Worklogs.Remove(entry);
+
+                    // Remove group if empty
+                    if (group.Worklogs.Count == 0)
+                    {
+                        _worklogGroups.Remove(group);
+                    }
+
+                    break;
+                }
+            }
+
+            RefreshWorklogDisplay();
+        }
+
+        private void RefreshWorklogDisplay()
+        {
+            tvWorklogs.ItemsSource = null;
+            tvWorklogs.ItemsSource = _worklogGroups;
+
+            // Expand all groups
+            tvWorklogs.UpdateLayout();
+            foreach (var item in tvWorklogs.Items)
+            {
+                var tvi = tvWorklogs.ItemContainerGenerator.ContainerFromItem(item) as TreeViewItem;
+                if (tvi != null)
+                {
+                    tvi.IsExpanded = true;
+                }
+            }
+
+            UpdateStatusWithTotals();
+        }
+
+        private void UpdateStatusWithTotals()
+        {
+            int totalWorklogs = _worklogGroups.Sum(g => g.Worklogs.Count);
+            int totalSeconds = _worklogGroups.Sum(g => g.Worklogs.Sum(w => w.TimeSpentSeconds));
+            int uniqueTickets = _worklogGroups
+                .SelectMany(g => g.Worklogs)
+                .Select(w => w.IssueKey)
+                .Distinct()
+                .Count();
+
+            string totalTime = FormatTimeSpent(totalSeconds);
+
+            SetStatus(string.Format("{0} worklogs across {1} tickets. Total: {2}",
+                totalWorklogs, uniqueTickets, totalTime));
+        }
+
+        #endregion
 
         private async void LoadStoredCredentials()
         {
@@ -131,8 +254,6 @@ namespace JiraWorklogViewer
             }
 
             bool useDateFilter = chkUseDateFilter.IsChecked == true;
-            DateTime? fromDate = null;
-            DateTime? toDate = null;
 
             if (useDateFilter)
             {
@@ -143,15 +264,27 @@ namespace JiraWorklogViewer
                     return;
                 }
 
-                fromDate = dpFromDate.SelectedDate.Value;
-                toDate = dpToDate.SelectedDate.Value;
-
-                if (fromDate > toDate)
+                if (dpFromDate.SelectedDate.Value > dpToDate.SelectedDate.Value)
                 {
                     MessageBox.Show("From date must be before or equal to To date.",
                         "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
+            }
+
+            await FetchWorklogsAsync();
+        }
+
+        private async Task FetchWorklogsAsync()
+        {
+            bool useDateFilter = chkUseDateFilter.IsChecked == true;
+            DateTime? fromDate = null;
+            DateTime? toDate = null;
+
+            if (useDateFilter && dpFromDate.SelectedDate.HasValue && dpToDate.SelectedDate.HasValue)
+            {
+                fromDate = dpFromDate.SelectedDate.Value;
+                toDate = dpToDate.SelectedDate.Value;
             }
 
             // Get ticket filter (can be empty)
@@ -237,7 +370,8 @@ namespace JiraWorklogViewer
 
         private void DisplayWorklogs(List<WorklogGroup> worklogGroups)
         {
-            tvWorklogs.ItemsSource = worklogGroups;
+            _worklogGroups = worklogGroups;
+            tvWorklogs.ItemsSource = _worklogGroups;
 
             // Expand all groups
             tvWorklogs.UpdateLayout();
@@ -328,6 +462,201 @@ namespace JiraWorklogViewer
             dpToDate.IsEnabled = enabled && chkUseDateFilter.IsChecked == true;
             txtTicketFilter.IsEnabled = enabled;
             btnClearFilter.IsEnabled = enabled;
+            btnAddWorklog.IsEnabled = enabled && _isConnected;
+        }
+
+        private async void BtnAddWorklog_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Get default ticket key from filter or selected worklog
+            string defaultTicketKey = null;
+            if (!string.IsNullOrWhiteSpace(txtTicketFilter.Text))
+            {
+                defaultTicketKey = txtTicketFilter.Text.Trim();
+            }
+            else if (tvWorklogs.SelectedItem is WorklogEntry selectedWorklog)
+            {
+                defaultTicketKey = selectedWorklog.IssueKey;
+            }
+
+            var addDialog = new AddWorklogWindow(defaultTicketKey);
+            addDialog.Owner = this;
+
+            if (addDialog.ShowDialog() == true)
+            {
+                try
+                {
+                    SetUIEnabled(false);
+                    txtStatus.Text = "Creating worklog...";
+
+                    var createdWorklog = await _jiraService.CreateWorklogAsync(
+                        addDialog.TicketKey,
+                        addDialog.StartedDateTime,
+                        addDialog.TimeSpent,
+                        addDialog.Comment);
+
+                    // Update local list instead of fetching
+                    AddWorklogToList(createdWorklog);
+
+                    txtStatus.Text = string.Format("Worklog created: {0} - {1}",
+                        createdWorklog.IssueKey, createdWorklog.TimeSpent);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Failed to create worklog: " + ex.Message, "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    txtStatus.Text = "Failed to create worklog";
+                }
+                finally
+                {
+                    SetUIEnabled(true);
+                }
+            }
+        }
+
+        private WorklogEntry GetWorklogFromContextMenu(object sender)
+        {
+            var menuItem = sender as MenuItem;
+            if (menuItem == null) return null;
+
+            var contextMenu = menuItem.Parent as ContextMenu;
+            if (contextMenu == null) return null;
+
+            var stackPanel = contextMenu.PlacementTarget as StackPanel;
+            if (stackPanel == null) return null;
+
+            return stackPanel.DataContext as WorklogEntry;
+        }
+
+        private async void ContextMenu_AddWorklog_Click(object sender, RoutedEventArgs e)
+        {
+            var worklog = GetWorklogFromContextMenu(sender);
+            if (worklog == null) return;
+
+            var addDialog = new AddWorklogWindow(worklog.IssueKey);
+            addDialog.Owner = this;
+
+            if (addDialog.ShowDialog() == true)
+            {
+                try
+                {
+                    SetUIEnabled(false);
+                    txtStatus.Text = "Creating worklog...";
+
+                    var createdWorklog = await _jiraService.CreateWorklogAsync(
+                        addDialog.TicketKey,
+                        addDialog.StartedDateTime,
+                        addDialog.TimeSpent,
+                        addDialog.Comment);
+
+                    // Update local list instead of fetching
+                    AddWorklogToList(createdWorklog);
+
+                    txtStatus.Text = string.Format("Worklog created: {0} - {1}",
+                        createdWorklog.IssueKey, createdWorklog.TimeSpent);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Failed to create worklog: " + ex.Message, "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    txtStatus.Text = "Failed to create worklog";
+                }
+                finally
+                {
+                    SetUIEnabled(true);
+                }
+            }
+        }
+
+        private async void ContextMenu_EditWorklog_Click(object sender, RoutedEventArgs e)
+        {
+            var worklog = GetWorklogFromContextMenu(sender);
+            if (worklog == null) return;
+
+            var editDialog = new AddWorklogWindow(
+                worklog.Id,
+                worklog.IssueKey,
+                worklog.Started,
+                worklog.TimeSpent,
+                worklog.Comment);
+            editDialog.Owner = this;
+
+            if (editDialog.ShowDialog() == true)
+            {
+                try
+                {
+                    SetUIEnabled(false);
+                    txtStatus.Text = "Updating worklog...";
+
+                    var updatedWorklog = await _jiraService.UpdateWorklogAsync(
+                        editDialog.TicketKey,
+                        editDialog.WorklogId,
+                        editDialog.StartedDateTime,
+                        editDialog.TimeSpent,
+                        editDialog.Comment);
+
+                    // Update local list instead of fetching
+                    UpdateWorklogInList(updatedWorklog);
+
+                    txtStatus.Text = string.Format("Worklog updated: {0} - {1}",
+                        updatedWorklog.IssueKey, updatedWorklog.TimeSpent);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Failed to update worklog: " + ex.Message, "Error",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    txtStatus.Text = "Failed to update worklog";
+                }
+                finally
+                {
+                    SetUIEnabled(true);
+                }
+            }
+        }
+
+        private async void ContextMenu_DeleteWorklog_Click(object sender, RoutedEventArgs e)
+        {
+            var worklog = GetWorklogFromContextMenu(sender);
+            if (worklog == null) return;
+
+            var result = MessageBox.Show(
+                string.Format("Delete worklog for {0} ({1} on {2})?",
+                    worklog.IssueKey, worklog.TimeSpent, worklog.StartedDateOnly),
+                "Confirm Delete",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes) return;
+
+            try
+            {
+                SetUIEnabled(false);
+                txtStatus.Text = "Deleting worklog...";
+
+                await _jiraService.DeleteWorklogAsync(worklog.IssueKey, worklog.Id);
+
+                // Update local list
+                RemoveWorklogFromList(worklog.Id);
+
+                txtStatus.Text = string.Format("Worklog deleted: {0} - {1}",
+                    worklog.IssueKey, worklog.TimeSpent);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to delete worklog: " + ex.Message, "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                txtStatus.Text = "Failed to delete worklog";
+            }
+            finally
+            {
+                SetUIEnabled(true);
+            }
         }
     }
 }

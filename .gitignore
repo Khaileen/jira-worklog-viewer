@@ -52,4 +52,20 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
-/.vs
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet (legacy packages folder)
+packages/
+
+# JetBrains Rider / ReSharper
+.idea/
+*.DotSettings.user
+
+# VS Code
+.vscode/
