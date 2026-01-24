@@ -1,0 +1,148 @@
+<Window x:Class="JiraWorklogViewer.ActiveWorklogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Active Worklog Tracker" 
+        Width="280" Height="200"
+        MinWidth="250" MinHeight="150"
+        WindowStartupLocation="Manual"
+        ResizeMode="CanResizeWithGrip"
+        Icon="app.ico"
+        Activated="Window_Activated"
+        Deactivated="Window_Deactivated">
+
+    <Window.Resources>
+        <Style x:Key="TimerStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="32"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="TicketStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+        <Style x:Key="ActionButton" TargetType="Button">
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="MinWidth" Value="80"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Always on Top Toggle -->
+        <CheckBox Grid.Row="0" x:Name="chkAlwaysOnTop" Content="Always on top" 
+                  HorizontalAlignment="Right" Margin="0,0,0,10"
+                  Checked="ChkAlwaysOnTop_Changed" Unchecked="ChkAlwaysOnTop_Changed"/>
+
+        <!-- Ticket Picker -->
+        <GroupBox Grid.Row="1" x:Name="grpStartNew" Header="Start New" Margin="0,0,0,10">
+            <Grid Margin="5">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <TextBox Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                         x:Name="txtTicketFilter" 
+                         Margin="0,0,0,5"
+                         TextChanged="TxtTicketFilter_TextChanged">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Style.Triggers>
+                                <Trigger Property="Text" Value="">
+                                    <Setter Property="Background">
+                                        <Setter.Value>
+                                            <VisualBrush Stretch="None" AlignmentX="Left">
+                                                <VisualBrush.Visual>
+                                                    <TextBlock Text="  Filter tickets..." Foreground="Gray" Opacity="0.6"/>
+                                                </VisualBrush.Visual>
+                                            </VisualBrush>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+                
+                <ComboBox Grid.Row="1" Grid.Column="0" x:Name="cboTickets" 
+                          DisplayMemberPath="DisplayText"
+                          Margin="0,0,5,0"/>
+                <Button Grid.Row="1" Grid.Column="1" x:Name="btnStartNew" Content="Start" 
+                        Padding="15,5" Click="BtnStartNew_Click"/>
+            </Grid>
+        </GroupBox>
+
+        <!-- Current Running Worklog -->
+        <GroupBox Grid.Row="2" x:Name="grpCurrentlyRunning" Header="Currently Running" Margin="0,0,0,10">
+            <Grid Margin="5">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" x:Name="txtCurrentTicket" 
+                           Style="{StaticResource TicketStyle}"
+                           Text="(none)" Margin="0,0,0,5"/>
+                
+                <TextBlock Grid.Row="1" x:Name="txtTimer" 
+                           Style="{StaticResource TimerStyle}"
+                           Text="00:00:00" Foreground="#059669"
+                           ToolTip="Ctrl++ to add 1 minute (testing)"/>
+
+                <StackPanel Grid.Row="2" x:Name="pnlButtons" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+                    <Button x:Name="btnPause" Content="Pause" Style="{StaticResource ActionButton}"
+                            Click="BtnPause_Click" IsEnabled="False"/>
+                    <Button x:Name="btnResume" Content="Resume" Style="{StaticResource ActionButton}"
+                            Click="BtnResume_Click" Visibility="Collapsed"/>
+                    <Button x:Name="btnComplete" Content="Complete" Style="{StaticResource ActionButton}"
+                            Click="BtnComplete_Click" IsEnabled="False" Background="#059669" Foreground="White"/>
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!-- Notes -->
+        <GroupBox Grid.Row="4" x:Name="grpNotes" Header="Notes" Margin="0,0,0,10">
+            <TextBox x:Name="txtNotes" AcceptsReturn="True" AcceptsTab="True"
+                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                     MinHeight="80"
+                     TextChanged="TxtNotes_TextChanged"/>
+        </GroupBox>
+
+        <!-- Paused Worklogs List -->
+        <GroupBox Grid.Row="5" x:Name="grpPausedWorklogs" Header="Paused Worklogs" Margin="0,0,0,10">
+            <ListBox x:Name="lstPaused" Height="80"
+                     DisplayMemberPath="DisplayText"
+                     MouseDoubleClick="LstPaused_MouseDoubleClick">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Resume" Click="ContextMenu_Resume_Click"/>
+                        <MenuItem Header="Complete" Click="ContextMenu_Complete_Click"/>
+                        <Separator/>
+                        <MenuItem Header="Discard" Click="ContextMenu_Discard_Click"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+            </ListBox>
+        </GroupBox>
+
+        <!-- Status -->
+        <TextBlock Grid.Row="6" x:Name="txtStatus" Text="Ready" 
+                   Foreground="Gray" FontSize="11"/>
+    </Grid>
+</Window>

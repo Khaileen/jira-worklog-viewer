@@ -56,6 +56,41 @@ namespace JiraWorklogViewer.Services
             }
         }
 
+        public async Task<List<JiraAssignedIssue>> GetAssignedIssuesAsync()
+        {
+            var issues = new List<JiraAssignedIssue>();
+
+            string jql = "assignee = currentUser() AND status != Done ORDER BY updated DESC";
+            var searchUrl = string.Format(
+                "{0}/rest/api/3/search/jql?jql={1}&fields=summary&maxResults=50",
+                _baseUrl,
+                Uri.EscapeDataString(jql));
+
+            var response = await _httpClient.GetAsync(searchUrl);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return issues;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var searchResult = JsonConvert.DeserializeObject<JiraSearchResponse>(json);
+
+            if (searchResult.issues != null)
+            {
+                foreach (var issue in searchResult.issues)
+                {
+                    issues.Add(new JiraAssignedIssue
+                    {
+                        Key = issue.key,
+                        Summary = issue.fields != null ? issue.fields.summary : ""
+                    });
+                }
+            }
+
+            return issues;
+        }
+
         public async Task<List<WorklogGroup>> GetMyWorklogsAsync(DateTime? fromDate, DateTime? toDate, string ticketKey = null)
         {
             var worklogs = new List<WorklogEntry>();

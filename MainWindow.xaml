@@ -2,6 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Jira Worklog Viewer"
+        Width="1200" Height="800"
+        MinWidth="800" MinHeight="600"
         WindowStartupLocation="CenterScreen"
         Icon="app.ico">
 
@@ -69,6 +71,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Credentials Panel -->
@@ -133,6 +136,8 @@
                         <DatePicker x:Name="dpToDate" Width="120" Margin="0,0,10,0"/>
                         <Button x:Name="btnFetch" Content="Fetch Worklogs" Padding="10,3"
                                 Click="BtnFetch_Click"/>
+                        <Button x:Name="btnTracker" Content="⏱ Tracker" Padding="10,3" Margin="10,0,0,0"
+                                Click="BtnTracker_Click" ToolTip="Open Active Worklog Tracker"/>
                     </StackPanel>
 
                     <!-- Ticket Filter -->
@@ -218,22 +223,101 @@
             </GroupBox>
         </Grid>
 
+        <!-- Pending Review Panel (Collapsible) -->
+        <GroupBox Grid.Row="2" x:Name="grpPendingReview" Margin="0,10,0,0" Visibility="Collapsed"
+                  Height="200">
+            <GroupBox.Header>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Pending Review" VerticalAlignment="Center"/>
+                    <Button Content="✕" Padding="5,0" Margin="10,0,0,0" 
+                            FontSize="10" Background="Transparent" BorderThickness="0"
+                            Click="BtnClosePendingReview_Click" ToolTip="Close panel"/>
+                </StackPanel>
+            </GroupBox.Header>
+            <Grid Margin="5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Pending List -->
+                <ListBox Grid.Column="0" x:Name="lstPendingReview" 
+                         Margin="0,0,10,0"
+                         SelectionChanged="LstPendingReview_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding TicketKey}" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding TotalTimeFormatted}" Foreground="#059669" FontSize="11"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- Selected Item Details -->
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Ticket:" VerticalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="txtPendingTicket" 
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,0,3"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Date:" VerticalAlignment="Center" Margin="0,0,0,3"/>
+                    <DatePicker Grid.Row="1" Grid.Column="1" x:Name="dpPendingDate" Margin="0,0,0,3" Width="120" HorizontalAlignment="Left"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Time:" VerticalAlignment="Center" Margin="0,0,0,3"/>
+                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="txtPendingTime" Width="80" HorizontalAlignment="Left" Margin="0,0,0,3"/>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Notes:" VerticalAlignment="Top" Margin="0,0,0,3"/>
+                    <TextBox Grid.Row="3" Grid.Column="1" x:Name="txtPendingNotes" 
+                             AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" Margin="0,0,0,3"/>
+
+                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" 
+                                Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="btnPendingSave" Content="Save" Padding="8,3" Margin="0,0,5,0"
+                                Click="BtnPendingSave_Click"/>
+                        <Button x:Name="btnPendingDiscard" Content="Discard" Padding="8,3" Margin="0,0,5,0"
+                                Click="BtnPendingDiscard_Click"/>
+                        <Button x:Name="btnPendingSubmit" Content="Submit" Padding="8,3" 
+                                Background="#2563EB" Foreground="White"
+                                Click="BtnPendingSubmit_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </GroupBox>
+
         <!-- Status Bar -->
-        <StatusBar Grid.Row="2" Margin="0,10,0,0">
+        <StatusBar Grid.Row="3" Margin="0,10,0,0">
             <StatusBarItem>
                 <TextBlock x:Name="txtStatus" Text="Ready"/>
             </StatusBarItem>
         </StatusBar>
         </Grid>
 
-        <!-- Floating Action Button -->
-        <Button x:Name="btnAddWorklog" 
-                Style="{StaticResource FabStyle}"
-                Content="+"
-                ToolTip="Add Worklog"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Bottom"
-                Margin="0,0,25,25"
-                Click="BtnAddWorklog_Click"/>
+        <!-- Stacked Floating Action Buttons - Top Right -->
+        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,75,15,0">
+            <Button x:Name="btnPendingReviewFab" 
+                    Style="{StaticResource FabStyle}"
+                    Content="📝"
+                    ToolTip="Pending Review"
+                    Margin="0,0,0,10"
+                    Click="BtnPendingReviewFab_Click"/>
+            <Button x:Name="btnAddWorklog" 
+                    Style="{StaticResource FabStyle}"
+                    Content="+"
+                    ToolTip="Add Worklog"
+                    Click="BtnAddWorklog_Click"/>
+        </StackPanel>
     </Grid>
 </Window>

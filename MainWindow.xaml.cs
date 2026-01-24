@@ -15,6 +15,7 @@ namespace JiraWorklogViewer
         private readonly CredentialService _credentialService;
         private bool _isConnected;
         private List<WorklogGroup> _worklogGroups = new List<WorklogGroup>();
+        private ActiveWorklogWindow _trackerWindow;
 
         public MainWindow()
         {
@@ -368,6 +369,37 @@ namespace JiraWorklogViewer
             }
         }
 
+        private void BtnTracker_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // If tracker window exists and is still open, just bring it to front
+            if (_trackerWindow != null && _trackerWindow.IsLoaded)
+            {
+                _trackerWindow.Activate();
+                return;
+            }
+
+            // Create new tracker window with callback to refresh pending review
+            _trackerWindow = new ActiveWorklogWindow(_jiraService, OnWorklogCompleted);
+            _trackerWindow.Closed += (s, args) => _trackerWindow = null;
+            _trackerWindow.Show();
+        }
+
+        private void OnWorklogCompleted()
+        {
+            // Show and refresh pending review panel
+            EnsureActiveWorklogService();
+            _activeWorklogService.Reload(); // Reload from file to get tracker's changes
+            RefreshPendingReviewList();
+            grpPendingReview.Visibility = Visibility.Visible;
+        }
+
         private void DisplayWorklogs(List<WorklogGroup> worklogGroups)
         {
             _worklogGroups = worklogGroups;
@@ -463,6 +495,7 @@ namespace JiraWorklogViewer
             txtTicketFilter.IsEnabled = enabled;
             btnClearFilter.IsEnabled = enabled;
             btnAddWorklog.IsEnabled = enabled && _isConnected;
+            btnTracker.IsEnabled = enabled && _isConnected;
         }
 
         private async void BtnAddWorklog_Click(object sender, RoutedEventArgs e)
@@ -658,5 +691,186 @@ namespace JiraWorklogViewer
                 SetUIEnabled(true);
             }
         }
+
+        #region Pending Review Panel
+
+        private ActiveWorklog _selectedPendingWorklog;
+        private ActiveWorklogService _activeWorklogService;
+
+        private void EnsureActiveWorklogService()
+        {
+            if (_activeWorklogService == null)
+            {
+                _activeWorklogService = new ActiveWorklogService();
+            }
+        }
+
+        private void BtnPendingReviewFab_Click(object sender, RoutedEventArgs e)
+        {
+            if (grpPendingReview.Visibility == Visibility.Collapsed)
+            {
+                EnsureActiveWorklogService();
+                _activeWorklogService.Reload(); // Reload to get latest data
+                RefreshPendingReviewList();
+                grpPendingReview.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                grpPendingReview.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void BtnClosePendingReview_Click(object sender, RoutedEventArgs e)
+        {
+            grpPendingReview.Visibility = Visibility.Collapsed;
+        }
+
+        private void RefreshPendingReviewList()
+        {
+            EnsureActiveWorklogService();
+            var completed = _activeWorklogService.GetAll()
+                .Where(w => w.Status == Models.ActiveWorklogStatus.Completed)
+                .ToList();
+            lstPendingReview.ItemsSource = completed;
+
+            if (completed.Count == 0)
+            {
+                ClearPendingDetails();
+            }
+        }
+
+        private void LstPendingReview_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            _selectedPendingWorklog = lstPendingReview.SelectedItem as ActiveWorklog;
+
+            if (_selectedPendingWorklog == null)
+            {
+                ClearPendingDetails();
+                return;
+            }
+
+            txtPendingTicket.Text = _selectedPendingWorklog.DisplayText;
+            
+            // Get the earliest session start date
+            if (_selectedPendingWorklog.Sessions.Count > 0)
+            {
+                dpPendingDate.SelectedDate = _selectedPendingWorklog.Sessions.Min(s => s.Start).Date;
+            }
+            else
+            {
+                dpPendingDate.SelectedDate = DateTime.Today;
+            }
+
+            txtPendingTime.Text = _selectedPendingWorklog.TotalTimeJiraFormat;
+            txtPendingNotes.Text = _selectedPendingWorklog.Notes;
+        }
+
+        private void ClearPendingDetails()
+        {
+            _selectedPendingWorklog = null;
+            txtPendingTicket.Text = "";
+            dpPendingDate.SelectedDate = null;
+            txtPendingTime.Text = "";
+            txtPendingNotes.Text = "";
+        }
+
+        private void BtnPendingSave_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedPendingWorklog == null) return;
+
+            _activeWorklogService.UpdateNotes(_selectedPendingWorklog.TicketKey, txtPendingNotes.Text);
+            txtStatus.Text = "Saved changes for " + _selectedPendingWorklog.TicketKey;
+        }
+
+        private void BtnPendingDiscard_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedPendingWorklog == null) return;
+
+            var ticketKey = _selectedPendingWorklog.TicketKey;
+            
+            var result = MessageBox.Show(
+                string.Format("Discard worklog for {0}?\n\nTime tracked: {1}\n\nThis cannot be undone.",
+                    _selectedPendingWorklog.TicketKey, _selectedPendingWorklog.TotalTimeFormatted),
+                "Confirm Discard",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes) return;
+
+            _activeWorklogService.Remove(ticketKey);
+            RefreshPendingReviewList();
+            txtStatus.Text = "Discarded: " + ticketKey;
+        }
+
+        private async void BtnPendingSubmit_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedPendingWorklog == null) return;
+
+            if (!dpPendingDate.SelectedDate.HasValue)
+            {
+                MessageBox.Show("Please select a date.", "Validation Error",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(txtPendingTime.Text))
+            {
+                MessageBox.Show("Please enter time spent.", "Validation Error",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var result = MessageBox.Show(
+                string.Format("Submit {0} to {1}?",
+                    txtPendingTime.Text.Trim(),
+                    _selectedPendingWorklog.TicketKey),
+                "Confirm Submit",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (result != MessageBoxResult.Yes) return;
+
+            var ticketKey = _selectedPendingWorklog.TicketKey;
+
+            try
+            {
+                SetUIEnabled(false);
+                txtStatus.Text = "Submitting to Jira...";
+
+                var startTime = dpPendingDate.SelectedDate.Value.Date.AddHours(9); // Default 9 AM
+
+                await _jiraService.CreateWorklogAsync(
+                    ticketKey,
+                    startTime,
+                    txtPendingTime.Text.Trim(),
+                    txtPendingNotes.Text);
+
+                // Remove from active worklogs
+                _activeWorklogService.Remove(ticketKey);
+                RefreshPendingReviewList();
+
+                txtStatus.Text = "Submitted: " + ticketKey;
+
+                // Refresh main worklog list if date range includes this date
+                if (chkUseDateFilter.IsChecked == true &&
+                    dpPendingDate.SelectedDate >= dpFromDate.SelectedDate &&
+                    dpPendingDate.SelectedDate <= dpToDate.SelectedDate)
+                {
+                    await FetchWorklogsAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Failed to submit: " + ex.Message, "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                txtStatus.Text = "Submit failed";
+            }
+            finally
+            {
+                SetUIEnabled(true);
+            }
+        }
+
+        #endregion
     }
 }
