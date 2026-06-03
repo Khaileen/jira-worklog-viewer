@@ -329,6 +329,49 @@ namespace JiraWorklogViewer
             _activeWorklogService.UpdateNotes(_currentWorklog.TicketKey, txtNotes.Text);
         }
 
+        private void NotesTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (sender is not TextBox textBox) return;
+
+            const string tabSpaces = "  ";
+
+            if (e.Key == System.Windows.Input.Key.Tab)
+            {
+                int caretPos = textBox.CaretIndex;
+                textBox.SelectedText = tabSpaces;
+                textBox.CaretIndex = caretPos + tabSpaces.Length;
+                e.Handled = true;
+            }
+            else if (e.Key == System.Windows.Input.Key.Back)
+            {
+                if (textBox.CaretIndex >= 2 && textBox.SelectionLength == 0)
+                {
+                    int pos = textBox.CaretIndex;
+                    string before = textBox.Text.Substring(pos - 2, 2);
+                    if (before == tabSpaces)
+                    {
+                        textBox.Select(pos - 2, 2);
+                        textBox.SelectedText = "";
+                        e.Handled = true;
+                    }
+                }
+            }
+            else if (e.Key == System.Windows.Input.Key.Delete)
+            {
+                if (textBox.CaretIndex + 2 <= textBox.Text.Length && textBox.SelectionLength == 0)
+                {
+                    int pos = textBox.CaretIndex;
+                    string after = textBox.Text.Substring(pos, 2);
+                    if (after == tabSpaces)
+                    {
+                        textBox.Select(pos, 2);
+                        textBox.SelectedText = "";
+                        e.Handled = true;
+                    }
+                }
+            }
+        }
+
         private void LstPaused_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             var selected = lstPaused.SelectedItem as ActiveWorklog;

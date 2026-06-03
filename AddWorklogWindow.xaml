@@ -62,7 +62,8 @@
                  AcceptsReturn="True"
                  AcceptsTab="True"
                  TextWrapping="Wrap"
-                 VerticalScrollBarVisibility="Auto"/>
+                 VerticalScrollBarVisibility="Auto"
+                 PreviewKeyDown="NotesTextBox_PreviewKeyDown"/>
 
         <!-- Buttons -->
         <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" 

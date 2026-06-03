@@ -122,7 +122,8 @@
             <TextBox x:Name="txtNotes" AcceptsReturn="True" AcceptsTab="True"
                      TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                      MinHeight="80"
-                     TextChanged="TxtNotes_TextChanged"/>
+                     TextChanged="TxtNotes_TextChanged"
+                     PreviewKeyDown="NotesTextBox_PreviewKeyDown"/>
         </GroupBox>
 
         <!-- Paused Worklogs List -->
