@@ -222,7 +222,7 @@ namespace JiraWorklogViewer.Services
                 Id = jiraWorklog.id,
                 IssueKey = issueKey,
                 IssueSummary = issueSummary,
-                Started = DateTime.Parse(jiraWorklog.started),
+                Started = DateTime.Parse(jiraWorklog.started).ToLocalTime(),
                 TimeSpentSeconds = jiraWorklog.timeSpentSeconds,
                 TimeSpent = jiraWorklog.timeSpent,
                 Comment = ExtractCommentText(jiraWorklog.comment),
@@ -271,7 +271,7 @@ namespace JiraWorklogViewer.Services
                             int itemNumber = 1;
                             foreach (var item in block.content)
                             {
-                                string indent = new string(' ', indentLevel * 3);
+                                string indent = new string(' ', indentLevel * 2);
                                 sb.Append(indent + itemNumber + ". ");
                                 if (item.content != null)
                                 {
@@ -283,9 +283,8 @@ namespace JiraWorklogViewer.Services
                         break;
 
                     case "listItem":
-                        string bulletIndent = new string(' ', indentLevel * 3);
-                        string bullet = indentLevel == 0 ? "• " : "◦ ";
-                        sb.Append(bulletIndent + bullet);
+                        string bulletIndent = new string(' ', indentLevel * 2);
+                        sb.Append(bulletIndent + "- ");
                         if (block.content != null)
                         {
                             ExtractListItemContent(block.content, sb, indentLevel + 1);
@@ -801,6 +800,121 @@ namespace JiraWorklogViewer.Services
                 // Ignore errors, just return empty
             }
             return string.Empty;
+        }
+
+        /// <summary>
+        /// Fetches full ticket details — summary, status, assignee, priority, reporter.
+        /// </summary>
+        public async Task<TicketDetails> GetTicketDetailsAsync(string issueKey)
+        {
+            var url = string.Format(
+                "{0}/rest/api/3/issue/{1}?fields=summary,status,assignee,priority,reporter,created,updated",
+                _baseUrl, issueKey);
+
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                throw new Exception(string.Format("Failed to fetch ticket {0}: {1}", issueKey, error));
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var issue = JsonConvert.DeserializeObject<JiraIssueExtended>(json);
+            var f = issue.fields;
+
+            return new TicketDetails
+            {
+                Key      = issue.key,
+                Summary  = f?.summary ?? string.Empty,
+                Status   = f?.status?.name ?? "Unknown",
+                Assignee = f?.assignee?.displayName ?? "Unassigned",
+                Priority = f?.priority?.name ?? "None",
+                Reporter = f?.reporter?.displayName ?? "Unknown",
+                Created  = TryParseDate(f?.created),
+                Updated  = TryParseDate(f?.updated),
+            };
+        }
+
+        /// <summary>
+        /// Fetches all comments for a ticket, paginated.
+        /// </summary>
+        public async Task<List<TicketComment>> GetTicketCommentsAsync(string issueKey)
+        {
+            var comments = new List<TicketComment>();
+            int startAt = 0;
+            const int maxResults = 100;
+
+            while (true)
+            {
+                var url = string.Format(
+                    "{0}/rest/api/3/issue/{1}/comment?startAt={2}&maxResults={3}&orderBy=created",
+                    _baseUrl, issueKey, startAt, maxResults);
+
+                var response = await _httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode) break;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var container = JsonConvert.DeserializeObject<JiraCommentContainer>(json);
+
+                if (container?.comments == null || container.comments.Count == 0) break;
+
+                foreach (var c in container.comments)
+                {
+                    comments.Add(new TicketComment
+                    {
+                        Author  = c.author?.displayName ?? "Unknown",
+                        Created = TryParseDate(c.created) ?? DateTime.MinValue,
+                        Body    = ExtractCommentText(c.body),
+                    });
+                }
+
+                startAt += container.comments.Count;
+                if (startAt >= container.total) break;
+            }
+
+            return comments;
+        }
+
+        /// <summary>
+        /// Fetches all worklogs for a specific ticket regardless of author.
+        /// Used for the time defense feature.
+        /// </summary>
+        public async Task<List<WorklogEntry>> GetAllWorklogsForTicketAsync(string issueKey)
+        {
+            var entries = new List<WorklogEntry>();
+            var issueSummary = await GetIssueSummaryAsync(issueKey);
+
+            var url = string.Format("{0}/rest/api/3/issue/{1}/worklog", _baseUrl, issueKey);
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode) return entries;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var container = JsonConvert.DeserializeObject<JiraWorklogContainer>(json);
+
+            if (container?.worklogs != null)
+            {
+                foreach (var wl in container.worklogs)
+                {
+                    // Filter to current user only
+                    if (wl.author?.accountId == _currentUserAccountId)
+                    {
+                        var entry = ConvertToWorklogEntry(wl, issueKey, issueSummary);
+                        entries.Add(entry);
+                    }
+                }
+            }
+
+            return entries.OrderBy(e => e.Started).ToList();
+        }
+
+        private DateTime? TryParseDate(string dateStr)
+        {
+            if (string.IsNullOrEmpty(dateStr)) return null;
+            if (DateTime.TryParse(dateStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                return dt.ToLocalTime();
+            return null;
         }
     }
 }

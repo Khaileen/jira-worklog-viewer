@@ -281,7 +281,8 @@
                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Notes:" VerticalAlignment="Top" Margin="0,0,0,3"/>
                     <TextBox Grid.Row="3" Grid.Column="1" x:Name="txtPendingNotes" 
                              AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" Margin="0,0,0,3"/>
+                             VerticalScrollBarVisibility="Auto" Margin="0,0,0,3"
+                             PreviewKeyDown="NotesTextBox_PreviewKeyDown"/>
 
                     <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" 
                                 Orientation="Horizontal" HorizontalAlignment="Right">
@@ -307,17 +308,35 @@
 
         <!-- Stacked Floating Action Buttons - Top Right -->
         <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,75,15,0">
-            <Button x:Name="btnPendingReviewFab" 
+            <Button x:Name="btnPendingReviewFab"
                     Style="{StaticResource FabStyle}"
                     Content="📝"
                     ToolTip="Pending Review"
                     Margin="0,0,0,10"
                     Click="BtnPendingReviewFab_Click"/>
-            <Button x:Name="btnAddWorklog" 
+            <Button x:Name="btnAddWorklog"
                     Style="{StaticResource FabStyle}"
                     Content="+"
                     ToolTip="Add Worklog"
+                    Margin="0,0,0,10"
                     Click="BtnAddWorklog_Click"/>
+            <Button x:Name="btnStandup"
+                    Style="{StaticResource FabStyle}"
+                    Content="☀"
+                    ToolTip="Daily Stand-Up Generator"
+                    Margin="0,0,0,10"
+                    Click="BtnStandup_Click"/>
+            <Button x:Name="btnDefense"
+                    Style="{StaticResource FabStyle}"
+                    Content="🛡"
+                    ToolTip="Project Time Defense"
+                    Margin="0,0,0,10"
+                    Click="BtnDefense_Click"/>
+            <Button x:Name="btnJiraFetch"
+                    Style="{StaticResource FabStyle}"
+                    Content="🔍"
+                    ToolTip="Jira Fetch Analysis"
+                    Click="BtnJiraFetch_Click"/>
         </StackPanel>
     </Grid>
 </Window>

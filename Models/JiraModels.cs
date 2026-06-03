@@ -143,4 +143,78 @@ namespace JiraWorklogViewer.Models
         public List<string> errorMessages { get; set; }
         public Dictionary<string, string> errors { get; set; }
     }
+
+    /// <summary>
+    /// Full ticket details including status, assignee, and summary.
+    /// </summary>
+    public class TicketDetails
+    {
+        public string Key { get; set; }
+        public string Summary { get; set; }
+        public string Status { get; set; }
+        public string Assignee { get; set; }
+        public string Priority { get; set; }
+        public string Reporter { get; set; }
+        public DateTime? Created { get; set; }
+        public DateTime? Updated { get; set; }
+    }
+
+    /// <summary>
+    /// A single Jira comment with author and date.
+    /// </summary>
+    public class TicketComment
+    {
+        public string Author { get; set; }
+        public DateTime Created { get; set; }
+        public string Body { get; set; }
+
+        public string DateDisplay => Created.ToString("yyyy-MM-dd HH:mm");
+    }
+
+    // Extended Jira API response models for ticket details
+    public class JiraStatusField
+    {
+        public string name { get; set; }
+    }
+
+    public class JiraPriorityField
+    {
+        public string name { get; set; }
+    }
+
+    public class JiraCommentContainer
+    {
+        public List<JiraCommentEntry> comments { get; set; }
+        public int total { get; set; }
+        public int startAt { get; set; }
+        public int maxResults { get; set; }
+    }
+
+    public class JiraCommentEntry
+    {
+        public string id { get; set; }
+        public JiraAuthor author { get; set; }
+        public string created { get; set; }
+        public JiraComment body { get; set; }
+    }
+
+    public class JiraIssueFieldsExtended
+    {
+        public string summary { get; set; }
+        public JiraStatusField status { get; set; }
+        public JiraAuthor assignee { get; set; }
+        public JiraPriorityField priority { get; set; }
+        public JiraAuthor reporter { get; set; }
+        public string created { get; set; }
+        public string updated { get; set; }
+        public JiraCommentContainer comment { get; set; }
+        public JiraWorklogContainer worklog { get; set; }
+    }
+
+    public class JiraIssueExtended
+    {
+        public string id { get; set; }
+        public string key { get; set; }
+        public JiraIssueFieldsExtended fields { get; set; }
+    }
 }

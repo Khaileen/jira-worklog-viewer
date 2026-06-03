@@ -7,12 +7,15 @@ using System.Windows.Controls;
 using JiraWorklogViewer.Models;
 using JiraWorklogViewer.Services;
 
+
+
 namespace JiraWorklogViewer
 {
     public partial class MainWindow : Window
     {
         private readonly JiraService _jiraService;
         private readonly CredentialService _credentialService;
+        private readonly OllamaService _ollamaService;
         private bool _isConnected;
         private List<WorklogGroup> _worklogGroups = new List<WorklogGroup>();
         private ActiveWorklogWindow _trackerWindow;
@@ -31,6 +34,7 @@ namespace JiraWorklogViewer
 
             _jiraService = new JiraService();
             _credentialService = new CredentialService();
+            _ollamaService = new OllamaService();
 
             // Set default date range (last 7 days)
             dpToDate.SelectedDate = DateTime.Today;
@@ -496,6 +500,9 @@ namespace JiraWorklogViewer
             btnClearFilter.IsEnabled = enabled;
             btnAddWorklog.IsEnabled = enabled && _isConnected;
             btnTracker.IsEnabled = enabled && _isConnected;
+            btnStandup.IsEnabled = enabled && _isConnected;
+            btnDefense.IsEnabled = enabled && _isConnected;
+            btnJiraFetch.IsEnabled = enabled && _isConnected;
         }
 
         private async void BtnAddWorklog_Click(object sender, RoutedEventArgs e)
@@ -774,6 +781,49 @@ namespace JiraWorklogViewer
             txtPendingNotes.Text = "";
         }
 
+        private void NotesTextBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (sender is not TextBox textBox) return;
+
+            const string tabSpaces = "  ";
+
+            if (e.Key == System.Windows.Input.Key.Tab)
+            {
+                int caretPos = textBox.CaretIndex;
+                textBox.SelectedText = tabSpaces;
+                textBox.CaretIndex = caretPos + tabSpaces.Length;
+                e.Handled = true;
+            }
+            else if (e.Key == System.Windows.Input.Key.Back)
+            {
+                if (textBox.CaretIndex >= 2 && textBox.SelectionLength == 0)
+                {
+                    int pos = textBox.CaretIndex;
+                    string before = textBox.Text.Substring(pos - 2, 2);
+                    if (before == tabSpaces)
+                    {
+                        textBox.Select(pos - 2, 2);
+                        textBox.SelectedText = "";
+                        e.Handled = true;
+                    }
+                }
+            }
+            else if (e.Key == System.Windows.Input.Key.Delete)
+            {
+                if (textBox.CaretIndex + 2 <= textBox.Text.Length && textBox.SelectionLength == 0)
+                {
+                    int pos = textBox.CaretIndex;
+                    string after = textBox.Text.Substring(pos, 2);
+                    if (after == tabSpaces)
+                    {
+                        textBox.Select(pos, 2);
+                        textBox.SelectedText = "";
+                        e.Handled = true;
+                    }
+                }
+            }
+        }
+
         private void BtnPendingSave_Click(object sender, RoutedEventArgs e)
         {
             if (_selectedPendingWorklog == null) return;
@@ -869,6 +919,52 @@ namespace JiraWorklogViewer
             {
                 SetUIEnabled(true);
             }
+        }
+
+        #endregion
+
+        #region AI Feature Buttons
+
+        private void BtnStandup_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var window = new StandupWindow(_jiraService, _ollamaService);
+            window.Owner = this;
+            window.Show();
+        }
+
+        private void BtnDefense_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Phase 4 — coming next
+            MessageBox.Show("Defense feature coming soon.", "Not Yet Implemented",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void BtnJiraFetch_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Phase 5 — coming next
+            MessageBox.Show("Jira Fetch GUI coming soon.", "Not Yet Implemented",
+                MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         #endregion
