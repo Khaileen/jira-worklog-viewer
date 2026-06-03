@@ -9,8 +9,7 @@ namespace JiraWorklogViewer
         public double UiScale { get; set; } = 1.25;
 
         private static readonly string SettingsDir =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "JiraWorklogViewer");
+            AppDomain.CurrentDomain.BaseDirectory;
 
         private static readonly string SettingsFile =
             Path.Combine(SettingsDir, "settings.json");
@@ -33,7 +32,6 @@ namespace JiraWorklogViewer
         {
             try
             {
-                Directory.CreateDirectory(SettingsDir);
                 File.WriteAllText(SettingsFile, JsonConvert.SerializeObject(this, Formatting.Indented));
             }
             catch { }
