@@ -897,16 +897,58 @@ namespace JiraWorklogViewer.Services
             {
                 foreach (var wl in container.worklogs)
                 {
-                    // Filter to current user only
-                    if (wl.author?.accountId == _currentUserAccountId)
-                    {
-                        var entry = ConvertToWorklogEntry(wl, issueKey, issueSummary);
-                        entries.Add(entry);
-                    }
+                    // Include all authors — author name is preserved on WorklogEntry
+                    var entry = ConvertToWorklogEntry(wl, issueKey, issueSummary);
+                    entries.Add(entry);
                 }
             }
 
             return entries.OrderBy(e => e.Started).ToList();
+        }
+
+        /// <summary>
+        /// Fetches all status change events from the Jira changelog for a ticket.
+        /// </summary>
+        public async Task<List<TicketStatusChange>> GetTicketChangelogAsync(string issueKey)
+        {
+            var changes = new List<TicketStatusChange>();
+            int startAt = 0;
+
+            while (true)
+            {
+                var url = string.Format(
+                    "{0}/rest/api/3/issue/{1}/changelog?startAt={2}&maxResults=100",
+                    _baseUrl, issueKey, startAt);
+
+                var response = await _httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode) break;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var changelog = JsonConvert.DeserializeObject<JiraChangelogResponse>(json);
+
+                if (changelog?.values == null || changelog.values.Count == 0) break;
+
+                foreach (var entry in changelog.values)
+                {
+                    if (entry.items == null) continue;
+                    foreach (var item in entry.items)
+                    {
+                        if (item.field?.ToLower() != "status") continue;
+                        changes.Add(new TicketStatusChange
+                        {
+                            Created    = TryParseDate(entry.created) ?? DateTime.MinValue,
+                            Author     = entry.author?.displayName ?? "Unknown",
+                            FromStatus = item.fromString ?? string.Empty,
+                            ToStatus   = item.toString   ?? string.Empty,
+                        });
+                    }
+                }
+
+                startAt += changelog.values.Count;
+                if (changelog.isLast || startAt >= changelog.values.Count) break;
+            }
+
+            return changes.OrderBy(c => c.Created).ToList();
         }
 
         private DateTime? TryParseDate(string dateStr)

@@ -102,8 +102,17 @@
                 <StackPanel Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="3" Orientation="Horizontal">
                     <Button x:Name="btnSaveCredentials" Content="Save &amp; Connect" Width="100" Margin="0,0,5,0"
                             Click="BtnSaveCredentials_Click"/>
-                    <Button x:Name="btnClearCredentials" Content="Clear" Width="60"
+                    <Button x:Name="btnClearCredentials" Content="Clear" Width="60" Margin="0,0,15,0"
                             Click="BtnClearCredentials_Click"/>
+                    <TextBlock Text="Scale:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <ComboBox x:Name="cboScale" Width="70" VerticalAlignment="Center"
+                              SelectionChanged="CboScale_SelectionChanged">
+                        <ComboBoxItem Content="100%" Tag="1.0"/>
+                        <ComboBoxItem Content="125%" Tag="1.25"/>
+                        <ComboBoxItem Content="150%" Tag="1.5"/>
+                        <ComboBoxItem Content="175%" Tag="1.75"/>
+                        <ComboBoxItem Content="200%" Tag="2.0"/>
+                    </ComboBox>
                 </StackPanel>
             </Grid>
         </GroupBox>

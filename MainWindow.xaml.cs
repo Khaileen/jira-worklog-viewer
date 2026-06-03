@@ -36,6 +36,12 @@ namespace JiraWorklogViewer
             _credentialService = new CredentialService();
             _ollamaService = new OllamaService();
 
+            // Apply saved scale
+            Loaded += (s, e) => {
+                App.ApplyScale(this);
+                InitScaleDropdown();
+            };
+
             // Set default date range (last 7 days)
             dpToDate.SelectedDate = DateTime.Today;
             dpFromDate.SelectedDate = DateTime.Today.AddDays(-7);
@@ -392,6 +398,7 @@ namespace JiraWorklogViewer
             // Create new tracker window with callback to refresh pending review
             _trackerWindow = new ActiveWorklogWindow(_jiraService, OnWorklogCompleted);
             _trackerWindow.Closed += (s, args) => _trackerWindow = null;
+            _trackerWindow.Loaded += (s, e) => App.ApplyScale(_trackerWindow);
             _trackerWindow.Show();
         }
 
@@ -527,6 +534,7 @@ namespace JiraWorklogViewer
 
             var addDialog = new AddWorklogWindow(defaultTicketKey);
             addDialog.Owner = this;
+            addDialog.Loaded += (s, e) => App.ApplyScale(addDialog);
 
             if (addDialog.ShowDialog() == true)
             {
@@ -581,6 +589,7 @@ namespace JiraWorklogViewer
 
             var addDialog = new AddWorklogWindow(worklog.IssueKey);
             addDialog.Owner = this;
+            addDialog.Loaded += (s, e) => App.ApplyScale(addDialog);
 
             if (addDialog.ShowDialog() == true)
             {
@@ -626,6 +635,7 @@ namespace JiraWorklogViewer
                 worklog.TimeSpent,
                 worklog.Comment);
             editDialog.Owner = this;
+            editDialog.Loaded += (s, e) => App.ApplyScale(editDialog);
 
             if (editDialog.ShowDialog() == true)
             {
@@ -923,6 +933,40 @@ namespace JiraWorklogViewer
 
         #endregion
 
+        #region Scale
+
+        private bool _scaleInitializing = false;
+
+        private void InitScaleDropdown()
+        {
+            _scaleInitializing = true;
+            foreach (ComboBoxItem item in cboScale.Items)
+            {
+                if (double.TryParse(item.Tag?.ToString(), out double val) &&
+                    Math.Abs(val - App.Settings.UiScale) < 0.01)
+                {
+                    cboScale.SelectedItem = item;
+                    break;
+                }
+            }
+            if (cboScale.SelectedItem == null) cboScale.SelectedIndex = 1; // default 125%
+            _scaleInitializing = false;
+        }
+
+        private void CboScale_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_scaleInitializing) return;
+            if (cboScale.SelectedItem is ComboBoxItem item &&
+                double.TryParse(item.Tag?.ToString(), out double scale))
+            {
+                App.Settings.UiScale = scale;
+                App.Settings.Save();
+                App.ApplyScale(this);
+            }
+        }
+
+        #endregion
+
         #region AI Feature Buttons
 
         private void BtnStandup_Click(object sender, RoutedEventArgs e)
@@ -936,6 +980,7 @@ namespace JiraWorklogViewer
 
             var window = new StandupWindow(_jiraService, _ollamaService);
             window.Owner = this;
+            window.Loaded += (s, e) => App.ApplyScale(window);
             window.Show();
         }
 
@@ -948,9 +993,10 @@ namespace JiraWorklogViewer
                 return;
             }
 
-            // Phase 4 — coming next
-            MessageBox.Show("Defense feature coming soon.", "Not Yet Implemented",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            var window = new DefenseWindow(_jiraService, _ollamaService);
+            window.Owner = this;
+            window.Loaded += (s, e) => App.ApplyScale(window);
+            window.Show();
         }
 
         private void BtnJiraFetch_Click(object sender, RoutedEventArgs e)

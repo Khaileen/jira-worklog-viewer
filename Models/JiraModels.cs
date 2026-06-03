@@ -211,6 +211,42 @@ namespace JiraWorklogViewer.Models
         public JiraWorklogContainer worklog { get; set; }
     }
 
+    /// <summary>
+    /// A single status change event from the Jira changelog.
+    /// </summary>
+    public class TicketStatusChange
+    {
+        public DateTime Created { get; set; }
+        public string Author { get; set; }
+        public string FromStatus { get; set; }
+        public string ToStatus { get; set; }
+        public string DateDisplay => Created.ToString("yyyy-MM-dd HH:mm");
+    }
+
+    // Jira changelog API models
+    public class JiraChangelogResponse
+    {
+        public List<JiraChangelogEntry> values { get; set; }
+        public bool isLast { get; set; }
+        public int startAt { get; set; }
+        public int maxResults { get; set; }
+    }
+
+    public class JiraChangelogEntry
+    {
+        public string id { get; set; }
+        public JiraAuthor author { get; set; }
+        public string created { get; set; }
+        public List<JiraChangelogItem> items { get; set; }
+    }
+
+    public class JiraChangelogItem
+    {
+        public string field { get; set; }
+        public string fromString { get; set; }
+        public string toString { get; set; }
+    }
+
     public class JiraIssueExtended
     {
         public string id { get; set; }

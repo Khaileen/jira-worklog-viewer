@@ -78,21 +78,28 @@ namespace JiraWorklogViewer.Services
             string prompt,
             string model,
             CancellationToken cancellationToken = default,
-            int numCtx = 0)
+            int numCtx = 0,
+            string prefill = null)
         {
             var result = new OllamaAnalysisResult { Model = model };
             var sw = Stopwatch.StartNew();
 
             try
             {
+                var messages = new List<OllamaChatMessage>
+                {
+                    new OllamaChatMessage { role = "user", content = prompt }
+                };
+
+                // Forced assistant prefix — model continues from where we start it
+                if (!string.IsNullOrEmpty(prefill))
+                    messages.Add(new OllamaChatMessage { role = "assistant", content = prefill });
+
                 var request = new OllamaChatRequest
                 {
-                    model = model,
-                    messages = new List<OllamaChatMessage>
-                    {
-                        new OllamaChatMessage { role = "user", content = prompt }
-                    },
-                    stream = false
+                    model    = model,
+                    messages = messages,
+                    stream   = false
                 };
 
                 if (numCtx > 0)
@@ -118,7 +125,10 @@ namespace JiraWorklogViewer.Services
                 var chatResponse = JsonConvert.DeserializeObject<OllamaChatResponse>(responseJson);
 
                 result.Success      = true;
-                result.Content      = chatResponse.message?.content ?? string.Empty;
+                var rawContent      = chatResponse.message?.content ?? string.Empty;
+                result.Content      = !string.IsNullOrEmpty(prefill)
+                    ? prefill + rawContent
+                    : rawContent;
                 result.ResponseTimeSec = sw.Elapsed.TotalSeconds;
                 result.InputTokens  = chatResponse.prompt_eval_count;
                 result.OutputTokens = chatResponse.eval_count;
