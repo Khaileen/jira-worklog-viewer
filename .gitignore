@@ -69,3 +69,9 @@ packages/
 
 # VS Code
 .vscode/
+
+# Self-contained publish output
+publish/
+
+# Settings file (local only)
+settings.json
