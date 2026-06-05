@@ -808,7 +808,7 @@ namespace JiraWorklogViewer.Services
         public async Task<TicketDetails> GetTicketDetailsAsync(string issueKey)
         {
             var url = string.Format(
-                "{0}/rest/api/3/issue/{1}?fields=summary,status,assignee,priority,reporter,created,updated",
+                "{0}/rest/api/3/issue/{1}?fields=summary,status,assignee,priority,reporter,created,updated,timeoriginalestimate,timeestimate,aggregatetimeoriginalestimate,customfield_11639",
                 _baseUrl, issueKey);
 
             var response = await _httpClient.GetAsync(url);
@@ -833,6 +833,8 @@ namespace JiraWorklogViewer.Services
                 Reporter = f?.reporter?.displayName ?? "Unknown",
                 Created  = TryParseDate(f?.created),
                 Updated  = TryParseDate(f?.updated),
+                OriginalEstimateSeconds  = f?.timeoriginalestimate ?? f?.aggregatetimeoriginalestimate,
+                EstimatedEffortHours     = f?.customfield_11639,
             };
         }
 

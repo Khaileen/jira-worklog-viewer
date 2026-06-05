@@ -151,6 +151,68 @@ namespace JiraWorklogViewer.Services
         }
 
         /// <summary>
+        /// Sends a conversation (full messages array) to Ollama — supports incremental multi-turn synthesis.
+        /// Returns the assistant response and appends it to the messages list for continuity.
+        /// </summary>
+        public async Task<OllamaAnalysisResult> AnalyzeWithHistoryAsync(
+            List<OllamaChatMessage> messages,
+            string model,
+            CancellationToken cancellationToken = default)
+        {
+            var result = new OllamaAnalysisResult { Model = model };
+            var sw = Stopwatch.StartNew();
+
+            try
+            {
+                var request = new OllamaChatRequest
+                {
+                    model    = model,
+                    messages = messages,
+                    stream   = false
+                };
+
+                var json    = JsonConvert.SerializeObject(request, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync(_baseUrl + "/api/chat", content, cancellationToken);
+
+                sw.Stop();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    result.Success      = false;
+                    result.ErrorMessage = string.Format("Ollama error {0}: {1}", (int)response.StatusCode, response.ReasonPhrase);
+                    return result;
+                }
+
+                var responseJson = await response.Content.ReadAsStringAsync();
+                var chatResponse = JsonConvert.DeserializeObject<OllamaChatResponse>(responseJson);
+
+                result.Success         = true;
+                result.Content         = chatResponse.message?.content ?? string.Empty;
+                result.ResponseTimeSec = sw.Elapsed.TotalSeconds;
+                result.InputTokens     = chatResponse.prompt_eval_count;
+                result.OutputTokens    = chatResponse.eval_count;
+                result.TokensPerSec    = chatResponse.eval_duration > 0
+                    ? Math.Round(chatResponse.eval_count / (chatResponse.eval_duration / 1e9), 1) : 0;
+
+                // Append assistant response to history for next turn
+                messages.Add(new OllamaChatMessage { role = "assistant", content = result.Content });
+            }
+            catch (OperationCanceledException)
+            {
+                result.Success      = false;
+                result.ErrorMessage = "Analysis cancelled.";
+            }
+            catch (Exception ex)
+            {
+                result.Success      = false;
+                result.ErrorMessage = ex.Message;
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Formats metrics from an analysis result into a readable summary string.
         /// </summary>
         public static string FormatMetrics(OllamaAnalysisResult result)

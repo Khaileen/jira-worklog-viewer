@@ -71,6 +71,11 @@
                     <TextBlock Grid.Column="0" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <ComboBox Grid.Column="1" x:Name="cboModel" VerticalAlignment="Center"/>
 
+                    <TextBlock Grid.Column="3" Text="Est. Hours:" VerticalAlignment="Center" Margin="0,0,5,0"
+                               ToolTip="Original estimate (e.g. 5h, 2h 30m). Leave blank if unknown."/>
+                    <TextBox Grid.Column="4" x:Name="txtEstimate" Width="70" VerticalAlignment="Center"
+                             ToolTip="Original estimate (e.g. 5h, 2h 30m). Leave blank if unknown."/>
+
 
                     <Button Grid.Column="7" x:Name="btnAnalyze" Content="▶ Analyze"
                             Height="30" Click="BtnAnalyze_Click" IsDefault="True"/>
@@ -124,6 +129,15 @@
                          Background="#1E1E1E" Foreground="#D4D4D4"
                          BorderThickness="0" Padding="8"/>
             </TabItem>
+            <TabItem Header="Time Analysis" x:Name="tabTimeAnalysis">
+                <TextBox x:Name="txtTimeAnalysis"
+                         AcceptsReturn="True" IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="13"
+                         Background="#1E1E1E" Foreground="#FFD700"
+                         BorderThickness="0" Padding="8"/>
+            </TabItem>
         </TabControl>
 
         <!-- Metrics -->
@@ -132,12 +146,9 @@
 
         <!-- Action buttons -->
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button x:Name="btnCopySummary" Content="📋 Copy Summary"
-                    Width="130" Height="30" Margin="0,0,10,0"
+            <Button x:Name="btnCopySummary" Content="📋 Copy WLS + Prompt"
+                    Width="160" Height="30" Margin="0,0,10,0"
                     Click="BtnCopySummary_Click" IsEnabled="False"/>
-            <Button x:Name="btnCopyTech" Content="📋 Copy Technical"
-                    Width="130" Height="30" Margin="0,0,10,0"
-                    Click="BtnCopyTech_Click" IsEnabled="False"/>
             <Button x:Name="btnSaveMd" Content="💾 Save as MD"
                     Width="110" Height="30" Margin="0,0,10,0"
                     Click="BtnSaveMd_Click" IsEnabled="False"/>

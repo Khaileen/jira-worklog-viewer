@@ -157,6 +157,20 @@ namespace JiraWorklogViewer.Models
         public string Reporter { get; set; }
         public DateTime? Created { get; set; }
         public DateTime? Updated { get; set; }
+        public int? OriginalEstimateSeconds { get; set; }
+        public double? EstimatedEffortHours { get; set; }
+
+        public string OriginalEstimateFormatted
+        {
+            get
+            {
+                if (!OriginalEstimateSeconds.HasValue || OriginalEstimateSeconds.Value <= 0)
+                    return null;
+                int hrs  = OriginalEstimateSeconds.Value / 3600;
+                int mins = (OriginalEstimateSeconds.Value % 3600) / 60;
+                return hrs > 0 ? string.Format("{0}h {1}m", hrs, mins) : string.Format("{0}m", mins);
+            }
+        }
     }
 
     /// <summary>
@@ -209,6 +223,9 @@ namespace JiraWorklogViewer.Models
         public string updated { get; set; }
         public JiraCommentContainer comment { get; set; }
         public JiraWorklogContainer worklog { get; set; }
+        public int? timeoriginalestimate { get; set; }
+        public int? aggregatetimeoriginalestimate { get; set; }
+        public double? customfield_11639 { get; set; }  // Estimated Effort (Hrs)
     }
 
     /// <summary>

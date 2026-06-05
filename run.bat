@@ -1,2 +1,2 @@
 @echo off
-dotnet "%~dp0bin\Debug\net8.0-windows\JiraWorklogViewer.dll"
+start "" dotnet "%~dp0publish\JiraWorklogViewer.dll"
