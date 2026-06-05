@@ -38,8 +38,8 @@ namespace JiraWorklogViewer
             _jiraService = jiraService;
             _ollamaService = ollamaService;
 
-            // Start with CRM-3484 as default for testing
-            _tickets.Add(new TicketEntry { Key = "CRM-3484" });
+            // Start with one empty ticket entry
+            _tickets.Add(new TicketEntry { Key = string.Empty });
             lstTickets.ItemsSource = _tickets;
 
             Loaded += async (s, e) => await LoadModelsAsync();
@@ -1293,8 +1293,15 @@ namespace JiraWorklogViewer
 
                 File.WriteAllText(dlg.FileName, content.ToString(), Encoding.UTF8);
 
-                // Open in VS Code so Claude Code can immediately pick it up
-                try { System.Diagnostics.Process.Start("code", string.Format("\"{0}\"", dlg.FileName)); } catch { }
+                // Open in VS Code or default app
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("code", string.Format("\"{0}\"", dlg.FileName)) { UseShellExecute = true });
+                }
+                catch
+                {
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dlg.FileName) { UseShellExecute = true }); } catch { }
+                }
 
                 SetStatus(string.Format("Saved and opened: {0}", dlg.FileName));
             }

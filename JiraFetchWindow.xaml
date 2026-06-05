@@ -1,0 +1,125 @@
+<Window x:Class="JiraWorklogViewer.JiraFetchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Jira Fetch Analysis"
+        Width="1000" Height="750"
+        MinWidth="800" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResizeWithGrip"
+        Icon="app.ico">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Options -->
+        <GroupBox Grid.Row="0" Header="Options" Margin="0,0,0,10" Padding="10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="100"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="Ticket:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" x:Name="txtTicket" VerticalAlignment="Center"
+                         CharacterCasing="Upper"
+                         ToolTip="e.g. CRM-3484"/>
+
+                <TextBlock Grid.Column="3" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Grid.Column="4" x:Name="cboModel" VerticalAlignment="Center"/>
+
+                <Button Grid.Column="6" x:Name="btnFetch" Content="▶ Fetch &amp; Analyze"
+                        Height="30" Click="BtnFetch_Click" IsDefault="True"/>
+                <Button Grid.Column="8" x:Name="btnCancel" Content="Cancel"
+                        Height="30" Click="BtnCancel_Click" IsEnabled="False"/>
+            </Grid>
+        </GroupBox>
+
+        <!-- Status + Progress -->
+        <Grid Grid.Row="1" Margin="0,0,0,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="txtStatus" Text="Enter a ticket number and click Fetch &amp; Analyze."
+                           Foreground="Gray" FontStyle="Italic" VerticalAlignment="Center"/>
+                <TextBlock x:Name="txtProgressLabel" Grid.Column="1"
+                           Foreground="#2563EB" FontSize="11" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+            <ProgressBar Grid.Row="1" x:Name="progressBar"
+                         Height="4" Margin="0,4,0,0"
+                         Minimum="0" Maximum="100" Value="0"
+                         Foreground="#2563EB" Background="#E5E7EB"
+                         Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- Output tabs -->
+        <TabControl Grid.Row="2" x:Name="tabOutput">
+            <TabItem Header="7-Point Analysis" x:Name="tabAnalysis">
+                <TextBox x:Name="txtAnalysis"
+                         AcceptsReturn="True" IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="13"
+                         Background="#1E1E1E" Foreground="#D4D4D4"
+                         BorderThickness="0" Padding="8"/>
+            </TabItem>
+            <TabItem Header="Ticket Info" x:Name="tabInfo">
+                <TextBox x:Name="txtInfo"
+                         AcceptsReturn="True" IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="12"
+                         Background="#1E1E1E" Foreground="#9CDCFE"
+                         BorderThickness="0" Padding="8"/>
+            </TabItem>
+            <TabItem Header="Log" x:Name="tabLog">
+                <TextBox x:Name="txtLog"
+                         AcceptsReturn="True" IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="11"
+                         Background="#1E1E1E" Foreground="#808080"
+                         BorderThickness="0" Padding="8"/>
+            </TabItem>
+        </TabControl>
+
+        <!-- Metrics -->
+        <TextBlock Grid.Row="3" x:Name="txtMetrics"
+                   Foreground="Gray" FontSize="11" Margin="0,6,0,6"/>
+
+        <!-- Action buttons -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnCopyAll" Content="📋 Copy All"
+                    Width="100" Height="30" Margin="0,0,10,0"
+                    Click="BtnCopyAll_Click" IsEnabled="False"
+                    ToolTip="Copy entire MD content to clipboard"/>
+            <Button x:Name="btnOpenFolder" Content="📂 Open Folder"
+                    Width="120" Height="30" Margin="0,0,10,0"
+                    Click="BtnOpenFolder_Click" IsEnabled="False"/>
+            <Button x:Name="btnOpenVsCode" Content="💻 Open in VS Code"
+                    Width="140" Height="30" Margin="0,0,10,0"
+                    Click="BtnOpenVsCode_Click" IsEnabled="False"/>
+            <Button Content="Close" Width="80" Height="30"
+                    Click="BtnClose_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

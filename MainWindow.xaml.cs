@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using JiraWorklogViewer.Models;
 using JiraWorklogViewer.Services;
+using System.Windows.Media;
 
 
 
@@ -1008,9 +1009,22 @@ namespace JiraWorklogViewer
                 return;
             }
 
-            // Phase 5 — coming next
-            MessageBox.Show("Jira Fetch GUI coming soon.", "Not Yet Implemented",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            var creds = _credentialService.LoadCredentials();
+            if (creds == null)
+            {
+                MessageBox.Show("No credentials found.", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            string gitlabToken = Environment.GetEnvironmentVariable("GITLAB_API_TOKEN") ?? string.Empty;
+            var fetchService = new JiraFetchService(
+                creds.ServerUrl, creds.Email, creds.ApiToken, gitlabToken);
+
+            var window = new JiraFetchWindow(fetchService, _ollamaService);
+            window.Owner = this;
+            window.Loaded += (s, ev) => App.ApplyScale(window);
+            window.Show();
         }
 
         #endregion
