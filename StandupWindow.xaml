@@ -41,8 +41,14 @@
                 <DatePicker Grid.Column="4" x:Name="dpToday" Width="130" VerticalAlignment="Center"/>
 
                 <TextBlock Grid.Column="6" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <ComboBox Grid.Column="7" x:Name="cboModel" MinWidth="150" MaxWidth="250"
-                          VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                <StackPanel Grid.Column="7" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ComboBox x:Name="cboModel" MinWidth="150" MaxWidth="250"
+                              VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                    <TextBlock Text="AWS Profile:" VerticalAlignment="Center" Margin="14,0,6,0" FontSize="11" Foreground="Gray"/>
+                    <TextBox x:Name="txtBedrockProfile" Width="90" VerticalAlignment="Center" FontSize="11"
+                             ToolTip="AWS SSO profile name for Bedrock (e.g. kmiraato). Leave blank if not using Bedrock."
+                             LostFocus="TxtBedrockProfile_LostFocus"/>
+                </StackPanel>
 
                 <Button Grid.Column="8" x:Name="btnGenerate" Content="▶ Generate Stand-Up"
                         Height="30" Click="BtnGenerate_Click" IsDefault="True"/>

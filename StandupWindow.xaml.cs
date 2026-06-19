@@ -16,6 +16,7 @@ namespace JiraWorklogViewer
     {
         private readonly JiraService _jiraService;
         private readonly OllamaService _ollamaService;
+        private BedrockService _bedrockService;
         private CancellationTokenSource _cts;
         private string _lastGeneratedContent;
 
@@ -32,22 +33,51 @@ namespace JiraWorklogViewer
                 ? DateTime.Today.AddDays(-3)   // Monday → Friday
                 : DateTime.Today.AddDays(-1);
 
-            Loaded += async (s, e) => await LoadModelsAsync();
+            Loaded += async (s, e) =>
+            {
+                txtBedrockProfile.Text = App.Settings.BedrockProfile;
+                RebuildBedrockService();
+                await LoadModelsAsync();
+            };
+        }
+
+        private void RebuildBedrockService()
+        {
+            _bedrockService = new BedrockService(txtBedrockProfile.Text.Trim());
+        }
+
+        private async void TxtBedrockProfile_LostFocus(object sender, RoutedEventArgs e)
+        {
+            App.Settings.BedrockProfile = txtBedrockProfile.Text.Trim();
+            App.Settings.Save();
+            RebuildBedrockService();
+            await LoadModelsAsync();
         }
 
         private async Task LoadModelsAsync()
         {
-            // Claude (Prepare for Claude) is always first and default
+            cboModel.Items.Clear();
+
             cboModel.Items.Add(ModelNames.Claude);
+
+            if (_bedrockService.IsConfigured)
+            {
+                cboModel.Items.Add(ModelNames.BedrockSonnet);
+                cboModel.Items.Add(ModelNames.BedrockHaiku);
+                cboModel.Items.Add(ModelNames.BedrockOpus);
+            }
 
             var models = await _ollamaService.GetAvailableModelsAsync();
             foreach (var m in models) cboModel.Items.Add(m.Name);
 
-            // Default to Claude
             cboModel.SelectedItem = ModelNames.Claude;
 
-            if (models.Count == 0)
-                txtStatus.Text = "Ollama not running — Claude mode selected.";
+            if (!_bedrockService.IsConfigured && models.Count == 0)
+                txtStatus.Text = "No models available — enter an AWS Profile or start Ollama.";
+            else if (!_bedrockService.IsConfigured)
+                txtStatus.Text = "Ollama ready. Enter an AWS Profile to enable Bedrock models.";
+            else if (models.Count == 0)
+                txtStatus.Text = "Bedrock ready. Ollama not running.";
         }
 
         private async void BtnGenerate_Click(object sender, RoutedEventArgs e)
@@ -60,9 +90,10 @@ namespace JiraWorklogViewer
             }
 
             string model = cboModel.SelectedItem?.ToString();
-            bool claudeMode = ModelNames.IsClaude(model);
+            bool claudeMode  = ModelNames.IsClaude(model);
+            bool bedrockMode = ModelNames.IsBedrock(model);
 
-            if (!claudeMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
+            if (!claudeMode && !bedrockMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
             {
                 MessageBox.Show("Please select a valid model.", "Validation",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -160,6 +191,51 @@ namespace JiraWorklogViewer
                     btnCopy.IsEnabled = true;
                     btnSaveMd.IsEnabled = true;
                     SetStatus("Ready for Claude — copy and paste into Claude.");
+                    SetUIGenerating(false);
+                    return;
+                }
+
+                // Step 3b: Bedrock mode — single call with all raw data
+                if (bedrockMode)
+                {
+                    var raw = new StringBuilder();
+                    raw.AppendLine(string.Format("## Yesterday ({0})", yesterday.ToString("yyyy-MM-dd dddd")));
+                    raw.AppendLine();
+                    foreach (var g in yesterdayGroups)
+                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
+                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                                wl.AuthorDisplayName ?? "Unknown",
+                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
+                    raw.AppendLine();
+                    raw.AppendLine(string.Format("## Today ({0})", today.ToString("yyyy-MM-dd dddd")));
+                    raw.AppendLine();
+                    foreach (var g in todayGroups)
+                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
+                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                                wl.AuthorDisplayName ?? "Unknown",
+                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
+                    raw.AppendLine();
+                    raw.AppendLine("---");
+                    raw.AppendLine();
+                    raw.AppendLine("Using the worklog entries above, generate a daily stand-up summary:");
+                    raw.AppendLine("- Organize by: ## Yesterday, then ## Today");
+                    raw.AppendLine("- Under each section, one ### per ticket (KEY — Summary | Status | Assignee)");
+                    raw.AppendLine("- Bullets from worklog comments only — no invented content");
+                    raw.AppendLine("- End with: ## Blockers / Waiting On");
+
+                    SetStatus(string.Format("Running stand-up analysis with {0}...", model));
+                    var bedrockResult = await _bedrockService.AnalyzeAsync(raw.ToString(), model, _cts.Token);
+
+                    _lastGeneratedContent = bedrockResult.Success ? bedrockResult.Content : "(Bedrock analysis failed: " + bedrockResult.ErrorMessage + ")";
+                    txtOutput.Text = _lastGeneratedContent;
+                    txtMetrics.Text = bedrockResult.Success
+                        ? string.Format("⏱ {0:F1}s  |  📥 {1} in  |  📤 {2} out", bedrockResult.ResponseTimeSec, bedrockResult.InputTokens, bedrockResult.OutputTokens)
+                        : "⚠ Bedrock failed: " + bedrockResult.ErrorMessage;
+                    btnCopy.IsEnabled = true;
+                    btnSaveMd.IsEnabled = true;
+                    SetStatus(bedrockResult.Success ? string.Format("Done — {0}.", model) : "Bedrock error.");
                     SetUIGenerating(false);
                     return;
                 }

@@ -18,6 +18,7 @@ namespace JiraWorklogViewer
     {
         private readonly JiraService _jiraService;
         private readonly OllamaService _ollamaService;
+        private BedrockService _bedrockService;
         private CancellationTokenSource _cts;
         private string _lastSummary;
         private string _lastTechnical;
@@ -42,21 +43,51 @@ namespace JiraWorklogViewer
             _tickets.Add(new TicketEntry { Key = string.Empty });
             lstTickets.ItemsSource = _tickets;
 
-            Loaded += async (s, e) => await LoadModelsAsync();
+            Loaded += async (s, e) =>
+            {
+                txtBedrockProfile.Text = App.Settings.BedrockProfile;
+                RebuildBedrockService();
+                await LoadModelsAsync();
+            };
+        }
+
+        private void RebuildBedrockService()
+        {
+            _bedrockService = new BedrockService(txtBedrockProfile.Text.Trim());
+        }
+
+        private async void TxtBedrockProfile_LostFocus(object sender, RoutedEventArgs e)
+        {
+            App.Settings.BedrockProfile = txtBedrockProfile.Text.Trim();
+            App.Settings.Save();
+            RebuildBedrockService();
+            await LoadModelsAsync();
         }
 
         private async Task LoadModelsAsync()
         {
-            // Claude (Prepare for Claude) is always first and default
+            cboModel.Items.Clear();
+
             cboModel.Items.Add(ModelNames.Claude);
+
+            if (_bedrockService.IsConfigured)
+            {
+                cboModel.Items.Add(ModelNames.BedrockSonnet);
+                cboModel.Items.Add(ModelNames.BedrockHaiku);
+                cboModel.Items.Add(ModelNames.BedrockOpus);
+            }
 
             var models = await _ollamaService.GetAvailableModelsAsync();
             foreach (var m in models) cboModel.Items.Add(m.Name);
 
             cboModel.SelectedItem = ModelNames.Claude;
 
-            if (models.Count == 0)
-                txtStatus.Text = "Ollama not running — Claude mode selected.";
+            if (!_bedrockService.IsConfigured && models.Count == 0)
+                txtStatus.Text = "No models available — enter an AWS Profile or start Ollama.";
+            else if (!_bedrockService.IsConfigured)
+                txtStatus.Text = "Ollama ready. Enter an AWS Profile to enable Bedrock models.";
+            else if (models.Count == 0)
+                txtStatus.Text = "Bedrock ready. Ollama not running.";
         }
 
         private void BtnAddTicket_Click(object sender, RoutedEventArgs e)
@@ -89,9 +120,10 @@ namespace JiraWorklogViewer
             }
 
             string model = cboModel.SelectedItem?.ToString();
-            bool claudeMode = ModelNames.IsClaude(model);
+            bool claudeMode  = ModelNames.IsClaude(model);
+            bool bedrockMode = ModelNames.IsBedrock(model);
 
-            if (!claudeMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
+            if (!claudeMode && !bedrockMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
             {
                 MessageBox.Show("Please select a valid model.", "Validation",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -208,6 +240,72 @@ namespace JiraWorklogViewer
                     btnCopySummary.IsEnabled = true;
                     btnSaveMd.IsEnabled = true;
                     SetStatus("Ready for Claude — save as MD or copy WLS + Prompt.");
+                    SetUIAnalyzing(false);
+                    return;
+                }
+
+                // Step 2b: Bedrock mode — single call with all raw data
+                if (bedrockMode)
+                {
+                    var raw = new StringBuilder();
+                    raw.AppendLine("# Work Log Summary (Raw — For Bedrock Analysis)");
+                    raw.AppendLine();
+                    foreach (var wl in allWorklogs.OrderBy(w => w.Started))
+                    {
+                        string comment = string.IsNullOrWhiteSpace(wl.Comment)
+                            ? "(no comment)"
+                            : wl.Comment.Replace("\r", "").Replace("\n", " ");
+                        raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                            wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                            wl.AuthorDisplayName ?? "Unknown", comment));
+                        raw.AppendLine();
+                    }
+                    foreach (var c in allComments.OrderBy(c => c.Created))
+                    {
+                        string body = JiraFetchService.CleanComment(c.Body ?? string.Empty, c.Author ?? string.Empty);
+                        if (string.IsNullOrEmpty(body)) continue;
+                        raw.AppendLine(string.Format("**{0} | COMMENT | {1}:** {2}",
+                            c.Created.ToString("yyyy-MM-dd"), c.Author, body));
+                        raw.AppendLine();
+                    }
+                    foreach (var sc in allStatusChanges.OrderBy(s => s.Created))
+                    {
+                        raw.AppendLine(string.Format("**{0} | STATUS | {1}:** {2} → {3}",
+                            sc.Created.ToString("yyyy-MM-dd"), sc.Author, sc.FromStatus, sc.ToStatus));
+                        raw.AppendLine();
+                    }
+
+                    var bedrockStatuses = FilterMeaningfulStatusChanges(allStatusChanges);
+                    var bedrockTicketSummaries = ticketKeys
+                        .Where(k => ticketDetails.ContainsKey(k))
+                        .Select(k => string.Format("{0} — {1}", k, ticketDetails[k].Summary)).ToList();
+
+                    string bedrockEstimate = txtEstimate.Text.Trim();
+                    string bedrockTimeAnalysis = BuildDeterministicTimeAnalysis(
+                        bedrockTicketSummaries, allWorklogs, bedrockStatuses, bedrockEstimate, raw.ToString());
+
+                    // Build analysis prompt
+                    var analysisPrompt = BuildTechnicalSynthesisPrompt(bedrockTicketSummaries, raw.ToString(), allWorklogs);
+
+                    _lastSummary      = raw.ToString();
+                    _lastTimeAnalysis = bedrockTimeAnalysis;
+                    txtSummary.Text      = _lastSummary;
+                    txtTimeAnalysis.Text = _lastTimeAnalysis;
+                    btnCopySummary.IsEnabled = true;
+
+                    SetStatus(string.Format("Running analysis with {0}...", model));
+                    var bedrockResult = await _bedrockService.AnalyzeAsync(analysisPrompt, model, _cts.Token);
+
+                    _lastTechnical    = bedrockResult.Success ? bedrockResult.Content : "(Bedrock analysis failed: " + bedrockResult.ErrorMessage + ")";
+                    txtTechnical.Text = _lastTechnical;
+                    tabOutput.SelectedItem = tabTechnical;
+
+                    txtMetrics.Text = bedrockResult.Success
+                        ? string.Format("⏱ {0:F1}s  |  📥 {1} in  |  📤 {2} out", bedrockResult.ResponseTimeSec, bedrockResult.InputTokens, bedrockResult.OutputTokens)
+                        : "⚠ Bedrock failed: " + bedrockResult.ErrorMessage;
+
+                    btnSaveMd.IsEnabled = true;
+                    SetStatus(bedrockResult.Success ? string.Format("Analysis complete — {0}.", model) : "Bedrock error.");
                     SetUIAnalyzing(false);
                     return;
                 }

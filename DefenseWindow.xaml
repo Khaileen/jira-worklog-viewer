@@ -76,6 +76,13 @@
                     <TextBox Grid.Column="4" x:Name="txtEstimate" Width="70" VerticalAlignment="Center"
                              ToolTip="Original estimate (e.g. 5h, 2h 30m). Leave blank if unknown."/>
 
+                    <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                        <TextBlock Text="AWS Profile:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="11" Foreground="Gray"/>
+                        <TextBox x:Name="txtBedrockProfile" Width="90" VerticalAlignment="Center" FontSize="11"
+                                 ToolTip="AWS SSO profile name for Bedrock (e.g. kmiraato). Leave blank if not using Bedrock."
+                                 LostFocus="TxtBedrockProfile_LostFocus"/>
+                    </StackPanel>
+
 
                     <Button Grid.Column="7" x:Name="btnAnalyze" Content="▶ Analyze"
                             Height="30" Click="BtnAnalyze_Click" IsDefault="True"/>
