@@ -40,6 +40,13 @@
                 <TextBlock Grid.Column="3" Text="Model:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <ComboBox Grid.Column="4" x:Name="cboModel" VerticalAlignment="Center"/>
 
+                <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                    <TextBlock Text="AWS Profile:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="11" Foreground="Gray"/>
+                    <TextBox x:Name="txtBedrockProfile" Width="90" VerticalAlignment="Center" FontSize="11"
+                             ToolTip="AWS SSO profile name for Bedrock (e.g. kmiraato). Leave blank if not using Bedrock."
+                             LostFocus="TxtBedrockProfile_LostFocus"/>
+                </StackPanel>
+
                 <Button Grid.Column="6" x:Name="btnFetch" Content="▶ Fetch &amp; Analyze"
                         Height="30" Click="BtnFetch_Click" IsDefault="True"/>
                 <Button Grid.Column="8" x:Name="btnCancel" Content="Cancel"

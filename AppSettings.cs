@@ -7,6 +7,7 @@ namespace JiraWorklogViewer
     public class AppSettings
     {
         public double UiScale { get; set; } = 1.25;
+        public string BedrockProfile { get; set; } = string.Empty;
 
         private static readonly string SettingsDir =
             AppDomain.CurrentDomain.BaseDirectory;

@@ -9,6 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.BedrockRuntime" Version="3.7.*" />
+    <PackageReference Include="AWSSDK.SSO" Version="3.7.*" />
+    <PackageReference Include="AWSSDK.SSOOIDC" Version="3.7.*" />
     <PackageReference Include="ClosedXML" Version="0.102.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
