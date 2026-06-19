@@ -37,26 +37,17 @@ namespace JiraWorklogViewer
 
         private async Task LoadModelsAsync()
         {
+            // Claude (Prepare for Claude) is always first and default
+            cboModel.Items.Add(ModelNames.Claude);
+
             var models = await _ollamaService.GetAvailableModelsAsync();
+            foreach (var m in models) cboModel.Items.Add(m.Name);
+
+            // Default to Claude
+            cboModel.SelectedItem = ModelNames.Claude;
 
             if (models.Count == 0)
-            {
-                cboModel.Items.Add("(Ollama not running)");
-                cboModel.SelectedIndex = 0;
-                cboModel.IsEnabled = false;
-                btnGenerate.IsEnabled = false;
-                txtStatus.Text = "⚠ Ollama is not running. Start Ollama and reopen this window.";
-                return;
-            }
-
-            foreach (var m in models)
-                cboModel.Items.Add(m.Name);
-
-            // Prefer mistral, then qwen2.5:7b, then first available
-            var preferred = new[] { "mistral", "qwen2.5:7b", "qwen2.5:14b" };
-            string selected = preferred.FirstOrDefault(p => models.Any(m => m.Name == p))
-                              ?? models[0].Name;
-            cboModel.SelectedItem = selected;
+                txtStatus.Text = "Ollama not running — Claude mode selected.";
         }
 
         private async void BtnGenerate_Click(object sender, RoutedEventArgs e)
@@ -69,9 +60,11 @@ namespace JiraWorklogViewer
             }
 
             string model = cboModel.SelectedItem?.ToString();
-            if (string.IsNullOrEmpty(model) || model.StartsWith("("))
+            bool claudeMode = ModelNames.IsClaude(model);
+
+            if (!claudeMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
             {
-                MessageBox.Show("Please select a valid Ollama model.", "Validation",
+                MessageBox.Show("Please select a valid model.", "Validation",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -129,6 +122,46 @@ namespace JiraWorklogViewer
                     {
                         // Skip tickets we can't access
                     }
+                }
+
+                // Step 3: Claude mode — skip analysis, output raw entries + prompt
+                if (claudeMode)
+                {
+                    var raw = new StringBuilder();
+                    raw.AppendLine(string.Format("## Yesterday ({0})", yesterday.ToString("yyyy-MM-dd dddd")));
+                    raw.AppendLine();
+                    foreach (var g in yesterdayGroups)
+                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
+                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                                wl.AuthorDisplayName ?? "Unknown",
+                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
+                    raw.AppendLine();
+                    raw.AppendLine(string.Format("## Today ({0})", today.ToString("yyyy-MM-dd dddd")));
+                    raw.AppendLine();
+                    foreach (var g in todayGroups)
+                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
+                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                                wl.AuthorDisplayName ?? "Unknown",
+                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
+                    raw.AppendLine();
+                    raw.AppendLine("---");
+                    raw.AppendLine();
+                    raw.AppendLine("Using the worklog entries above, generate a daily stand-up summary:");
+                    raw.AppendLine("- Organize by: ## Yesterday, then ## Today");
+                    raw.AppendLine("- Under each section, one ### per ticket (KEY — Summary | Status | Assignee)");
+                    raw.AppendLine("- Bullets from worklog comments only — no invented content");
+                    raw.AppendLine("- End with: ## Blockers / Waiting On");
+
+                    _lastGeneratedContent = raw.ToString();
+                    txtOutput.Text = _lastGeneratedContent;
+                    txtMetrics.Text = "Claude mode — raw data prepared, no model call made.";
+                    btnCopy.IsEnabled = true;
+                    btnSaveMd.IsEnabled = true;
+                    SetStatus("Ready for Claude — copy and paste into Claude.");
+                    SetUIGenerating(false);
+                    return;
                 }
 
                 // Step 3: Per-worklog Ollama analysis

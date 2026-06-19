@@ -8,6 +8,20 @@ namespace JiraWorklogViewer.Models
         public string DisplayName => Name;
     }
 
+    public static class ModelNames
+    {
+        public const string Claude        = "Claude (Prepare for Claude)";
+        public const string BedrockSonnet = "Bedrock: Claude Sonnet 4.6";
+        public const string BedrockHaiku  = "Bedrock: Claude Haiku 4.5";
+        public const string BedrockOpus   = "Bedrock: Claude Opus 4.7";
+
+        public static bool IsClaude(string model) =>
+            string.Equals(model, Claude, System.StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsBedrock(string model) =>
+            model != null && model.StartsWith("Bedrock:", System.StringComparison.OrdinalIgnoreCase);
+    }
+
     public class OllamaTagsResponse
     {
         public List<OllamaModelInfo> models { get; set; }

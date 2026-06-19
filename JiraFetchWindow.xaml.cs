@@ -14,8 +14,9 @@ namespace JiraWorklogViewer
     public partial class JiraFetchWindow : Window
     {
         private readonly JiraFetchService _fetchService;
-        private readonly OllamaService   _ollamaService;
-        private CancellationTokenSource  _cts;
+        private readonly OllamaService    _ollamaService;
+        private BedrockService            _bedrockService;
+        private CancellationTokenSource   _cts;
         private string _lastOutputFile;
 
         public JiraFetchWindow(JiraFetchService fetchService, OllamaService ollamaService)
@@ -24,25 +25,54 @@ namespace JiraWorklogViewer
             _fetchService  = fetchService;
             _ollamaService = ollamaService;
 
-            Loaded += async (s, e) => await LoadModelsAsync();
+            Loaded += async (s, e) =>
+            {
+                txtBedrockProfile.Text = App.Settings.BedrockProfile;
+                RebuildBedrockService();
+                await LoadModelsAsync();
+            };
+        }
+
+        private void RebuildBedrockService()
+        {
+            _bedrockService = new BedrockService(txtBedrockProfile.Text.Trim());
+        }
+
+        private async void TxtBedrockProfile_LostFocus(object sender, System.Windows.RoutedEventArgs e)
+        {
+            App.Settings.BedrockProfile = txtBedrockProfile.Text.Trim();
+            App.Settings.Save();
+            RebuildBedrockService();
+            await LoadModelsAsync();
         }
 
         private async Task LoadModelsAsync()
         {
-            var models = await _ollamaService.GetAvailableModelsAsync();
-            if (models.Count == 0)
+            cboModel.Items.Clear();
+
+            // 1. Claude (Prepare for Claude) — always first, always available
+            cboModel.Items.Add(ModelNames.Claude);
+
+            // 2. Bedrock models — shown if profile is configured
+            if (_bedrockService.IsConfigured)
             {
-                cboModel.Items.Add("(Ollama not running)");
-                cboModel.SelectedIndex = 0;
-                cboModel.IsEnabled     = false;
-                btnFetch.IsEnabled     = false;
-                txtStatus.Text         = "⚠ Ollama is not running.";
-                return;
+                cboModel.Items.Add(ModelNames.BedrockSonnet);
+                cboModel.Items.Add(ModelNames.BedrockHaiku);
+                cboModel.Items.Add(ModelNames.BedrockOpus);
             }
-            foreach (var m in models) cboModel.Items.Add(m.Name);
-            var preferred = new[] { "mistral", "qwen2.5:7b" };
-            string selected = preferred.FirstOrDefault(p => models.Any(m => m.Name == p)) ?? models[0].Name;
-            cboModel.SelectedItem = selected;
+
+            // 3. Ollama models — shown if Ollama is running
+            var ollamaModels = await _ollamaService.GetAvailableModelsAsync();
+            foreach (var m in ollamaModels) cboModel.Items.Add(m.Name);
+
+            cboModel.SelectedItem = ModelNames.Claude;
+
+            if (!_bedrockService.IsConfigured && ollamaModels.Count == 0)
+                txtStatus.Text = "No models available — enter an AWS Profile or start Ollama.";
+            else if (!_bedrockService.IsConfigured)
+                txtStatus.Text = "Ollama ready. Enter an AWS Profile to enable Bedrock models.";
+            else if (ollamaModels.Count == 0)
+                txtStatus.Text = "Bedrock ready. Ollama not running.";
         }
 
         private async void BtnFetch_Click(object sender, RoutedEventArgs e)
@@ -56,7 +86,10 @@ namespace JiraWorklogViewer
             }
 
             string model = cboModel.SelectedItem?.ToString();
-            if (string.IsNullOrEmpty(model) || model.StartsWith("("))
+            bool claudeMode  = ModelNames.IsClaude(model);
+            bool bedrockMode = ModelNames.IsBedrock(model);
+
+            if (!claudeMode && !bedrockMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
             {
                 MessageBox.Show("Please select a valid model.", "Validation",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -110,9 +143,41 @@ namespace JiraWorklogViewer
                     ticketNumber, ticket.Summary, ticket.Description);
                 Log($"✔ Similar: {similar.JiraMatches.Count} Jira, {similar.GitLabMrMatches.Count} MRs");
 
+                // Step 6: Claude mode — skip summarization, save raw MD + Claude instruction
+                if (claudeMode)
+                {
+                    string analysisInstruction = "Using the ticket data above, complete the 7-point analysis:\n" +
+                        "### 1. Summarized Issue\n### 2. Responsibility\n### 3. Affected Scope\n" +
+                        "### 4. Current Status\n### 5. Open Items / Next Steps\n" +
+                        "### 6. Similar Prior Work\n### 7. Known Pattern?";
+
+                    _lastOutputFile = await Task.Run(() =>
+                        _fetchService.BuildAndSaveMd(ticket, textAttachments, patterns, similar,
+                            string.Empty, ModelNames.Claude, excelConversions));
+
+                    // Rewrite the 7-point section with Claude instruction
+                    string mdContent = System.IO.File.ReadAllText(_lastOutputFile);
+                    mdContent = mdContent.Replace(
+                        "> Paste this file into Claude Code and ask: \"Complete the 7-point analysis based on the above.\"",
+                        "> **Claude Mode** — paste this file into Claude Code or Claude.ai and ask:\n>\n> _\"" + analysisInstruction + "\"_");
+                    System.IO.File.WriteAllText(_lastOutputFile, mdContent, System.Text.Encoding.UTF8);
+
+                    txtAnalysis.Text = "Claude mode — raw ticket data saved.\n\nOpen the MD file and paste into Claude to complete the 7-point analysis.";
+                    txtInfo.Text = BuildTicketInfo(ticket, patterns, similar);
+                    tabOutput.SelectedItem = tabAnalysis;
+                    txtMetrics.Text = "Claude mode — no model call made.";
+                    Log($"✔ Saved: {_lastOutputFile}");
+                    SetStatus($"Ready for Claude — {_lastOutputFile}");
+                    btnOpenFolder.IsEnabled = true;
+                    btnOpenVsCode.IsEnabled = true;
+                    btnCopyAll.IsEnabled    = true;
+                    SetUIRunning(false);
+                    return;
+                }
+
                 // Step 6: Summarize comments per-comment (better context coverage)
                 var commentSummaries = new List<string>();
-                if (ticket.Comments.Count > 0)
+                if (ticket.Comments.Count > 0 && !bedrockMode)
                 {
                     SetStatus($"Summarizing {ticket.Comments.Count} comment(s)...");
                     SetProgress(6, 7, "Comments");
@@ -131,11 +196,16 @@ namespace JiraWorklogViewer
                     Log($"✔ {ticket.Comments.Count} comment(s) summarized");
                 }
 
-                // Step 7: Run Ollama 7-point analysis
+                // Step 7: Run analysis (Bedrock or Ollama)
                 SetStatus($"Running analysis with {model}...");
                 SetProgress(7, 7, "Analysis");
-                var prompt = _fetchService.Build7PointPrompt(ticket, textAttachments, patterns, similar, commentSummaries);
-                var result = await _ollamaService.AnalyzeAsync(prompt, model, _cts.Token);
+                var analysisPrompt = _fetchService.Build7PointPrompt(ticket, textAttachments, patterns, similar, commentSummaries);
+
+                OllamaAnalysisResult result;
+                if (bedrockMode)
+                    result = await _bedrockService.AnalyzeAsync(analysisPrompt, model, _cts.Token);
+                else
+                    result = await _ollamaService.AnalyzeAsync(analysisPrompt, model, _cts.Token);
 
                 string analysisText = result.Success ? result.Content : string.Empty;
                 if (!result.Success)

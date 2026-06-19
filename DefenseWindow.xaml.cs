@@ -47,24 +47,16 @@ namespace JiraWorklogViewer
 
         private async Task LoadModelsAsync()
         {
+            // Claude (Prepare for Claude) is always first and default
+            cboModel.Items.Add(ModelNames.Claude);
+
             var models = await _ollamaService.GetAvailableModelsAsync();
+            foreach (var m in models) cboModel.Items.Add(m.Name);
+
+            cboModel.SelectedItem = ModelNames.Claude;
 
             if (models.Count == 0)
-            {
-                cboModel.Items.Add("(Ollama not running)");
-                cboModel.SelectedIndex = 0;
-                cboModel.IsEnabled = false;
-                btnAnalyze.IsEnabled = false;
-                txtStatus.Text = "⚠ Ollama is not running. Start Ollama and reopen this window.";
-                return;
-            }
-
-            foreach (var m in models)
-                cboModel.Items.Add(m.Name);
-
-            var preferred = new[] { "mistral", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5" };
-            string selected = preferred.FirstOrDefault(p => models.Any(m => m.Name == p)) ?? models[0].Name;
-            cboModel.SelectedItem = selected;
+                txtStatus.Text = "Ollama not running — Claude mode selected.";
         }
 
         private void BtnAddTicket_Click(object sender, RoutedEventArgs e)
@@ -97,9 +89,11 @@ namespace JiraWorklogViewer
             }
 
             string model = cboModel.SelectedItem?.ToString();
-            if (string.IsNullOrEmpty(model) || model.StartsWith("("))
+            bool claudeMode = ModelNames.IsClaude(model);
+
+            if (!claudeMode && (string.IsNullOrEmpty(model) || model.StartsWith("(")))
             {
-                MessageBox.Show("Please select a valid Ollama model.", "Validation",
+                MessageBox.Show("Please select a valid model.", "Validation",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -162,6 +156,58 @@ namespace JiraWorklogViewer
                 if (allWorklogs.Count == 0)
                 {
                     SetStatus("No worklogs found for the specified ticket(s).");
+                    SetUIAnalyzing(false);
+                    return;
+                }
+
+                // Step 2: Claude mode — skip WLS summarization, output raw data
+                if (claudeMode)
+                {
+                    var raw = new StringBuilder();
+                    raw.AppendLine("# Work Log Summary (Raw — Prepared for Claude)");
+                    raw.AppendLine();
+                    foreach (var wl in allWorklogs.OrderBy(w => w.Started))
+                    {
+                        string comment = string.IsNullOrWhiteSpace(wl.Comment)
+                            ? "(no comment)"
+                            : wl.Comment.Replace("\r", "").Replace("\n", " ");
+                        raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                            wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                            wl.AuthorDisplayName ?? "Unknown", comment));
+                        raw.AppendLine();
+                    }
+                    foreach (var c in allComments.OrderBy(c => c.Created))
+                    {
+                        string body = JiraFetchService.CleanComment(c.Body ?? string.Empty, c.Author ?? string.Empty);
+                        if (string.IsNullOrEmpty(body)) continue;
+                        raw.AppendLine(string.Format("**{0} | COMMENT | {1}:** {2}",
+                            c.Created.ToString("yyyy-MM-dd"), c.Author, body));
+                        raw.AppendLine();
+                    }
+                    foreach (var sc in allStatusChanges.OrderBy(s => s.Created))
+                    {
+                        raw.AppendLine(string.Format("**{0} | STATUS | {1}:** {2} → {3}",
+                            sc.Created.ToString("yyyy-MM-dd"), sc.Author, sc.FromStatus, sc.ToStatus));
+                        raw.AppendLine();
+                    }
+
+                    // Append Time Analysis (deterministic)
+                    string claudeEstimate = txtEstimate.Text.Trim();
+                    var claudeStatuses = FilterMeaningfulStatusChanges(allStatusChanges);
+                    string claudeTimeAnalysis = BuildDeterministicTimeAnalysis(
+                        ticketKeys.Where(k => ticketDetails.ContainsKey(k))
+                            .Select(k => string.Format("{0} — {1}", k, ticketDetails[k].Summary)).ToList(),
+                        allWorklogs, claudeStatuses, claudeEstimate, raw.ToString());
+
+                    _lastSummary      = raw.ToString();
+                    _lastTimeAnalysis = claudeTimeAnalysis;
+                    txtSummary.Text = _lastSummary;
+                    txtTimeAnalysis.Text = _lastTimeAnalysis;
+                    txtMetrics.Text = "Claude mode — raw data prepared, no model call made.";
+                    tabOutput.SelectedItem = tabSummary;
+                    btnCopySummary.IsEnabled = true;
+                    btnSaveMd.IsEnabled = true;
+                    SetStatus("Ready for Claude — save as MD or copy WLS + Prompt.");
                     SetUIAnalyzing(false);
                     return;
                 }
