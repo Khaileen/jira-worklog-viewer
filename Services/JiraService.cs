@@ -60,9 +60,11 @@ namespace JiraWorklogViewer.Services
         {
             var issues = new List<JiraAssignedIssue>();
 
-            string jql = "assignee = currentUser() AND status != Done ORDER BY updated DESC";
+            // Includes: tickets assigned to the user, tickets where the "Programmer" field is the
+            // user (regardless of assignee), and TT-13 (misc ticket for non-ticket actions) always.
+            string jql = "((assignee = currentUser() OR \"Programmer\" = currentUser()) AND status != Done) OR key = TT-13 ORDER BY updated DESC";
             var searchUrl = string.Format(
-                "{0}/rest/api/3/search/jql?jql={1}&fields=summary&maxResults=50",
+                "{0}/rest/api/3/search/jql?jql={1}&fields=summary,status&maxResults=50",
                 _baseUrl,
                 Uri.EscapeDataString(jql));
 
@@ -83,12 +85,59 @@ namespace JiraWorklogViewer.Services
                     issues.Add(new JiraAssignedIssue
                     {
                         Key = issue.key,
-                        Summary = issue.fields != null ? issue.fields.summary : ""
+                        Summary = issue.fields != null ? issue.fields.summary : "",
+                        Status = issue.fields?.status?.name ?? "Unknown"
                     });
                 }
             }
 
             return issues;
+        }
+
+        /// <summary>
+        /// Fetches tickets assigned to the user that are "Approved; Ready to stage", including
+        /// their Staging Date, so the stand-up can flag ones staging today vs. later.
+        /// </summary>
+        public async Task<List<StagingTicket>> GetStagingReadyTicketsAsync()
+        {
+            var tickets = new List<StagingTicket>();
+
+            string jql = "assignee = currentUser() AND status = \"Approved; Ready to stage\" ORDER BY updated DESC";
+            var searchUrl = string.Format(
+                "{0}/rest/api/3/search/jql?jql={1}&fields=summary,status,customfield_11687&maxResults=50",
+                _baseUrl,
+                Uri.EscapeDataString(jql));
+
+            var response = await _httpClient.GetAsync(searchUrl);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return tickets;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var searchResult = JsonConvert.DeserializeObject<JiraStagingSearchResponse>(json);
+
+            if (searchResult?.issues != null)
+            {
+                foreach (var issue in searchResult.issues)
+                {
+                    tickets.Add(new StagingTicket
+                    {
+                        Key = issue.key,
+                        Summary = issue.fields?.summary ?? string.Empty,
+                        Status = issue.fields?.status?.name ?? "Unknown",
+                        // Date-only field (no time-of-day) — parse as a plain calendar date.
+                        // TryParseDate's ToLocalTime() would shift it a day back in any UTC- timezone,
+                        // since a date-only string parses as Kind=Unspecified, which ToLocalTime() treats as UTC.
+                        StagingDate = DateTime.TryParse(issue.fields?.customfield_11687, out var stagingDate)
+                            ? stagingDate
+                            : (DateTime?)null
+                    });
+                }
+            }
+
+            return tickets;
         }
 
         public async Task<List<WorklogGroup>> GetMyWorklogsAsync(DateTime? fromDate, DateTime? toDate, string ticketKey = null)

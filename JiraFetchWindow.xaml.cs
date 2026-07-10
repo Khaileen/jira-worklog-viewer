@@ -115,6 +115,67 @@ namespace JiraWorklogViewer
                 foreach (var att in ticket.Attachments)
                     Log($"  → {att.Filename} ({att.Status})");
 
+                // Step 1b: Linked bugs — lighter than the main pipeline. Closed bugs are
+                // never analyzed further; open ones get a lighter fetch + one-sentence summary.
+                if (ticket.LinkedBugs.Count > 0)
+                {
+                    Log($"Found {ticket.LinkedBugs.Count} linked bug(s)");
+                    foreach (var bug in ticket.LinkedBugs)
+                    {
+                        _cts.Token.ThrowIfCancellationRequested();
+
+                        // Commonality check runs regardless of open/closed — a recurring pattern is
+                        // worth flagging even on a bug that's already been closed here.
+                        SetStatus($"Checking commonality for {bug.Key}...");
+                        try
+                        {
+                            var commonality = await _fetchService.CheckBugCommonalityAsync(bug.Key, bug.Summary);
+                            bug.IsCommon = commonality.IsCommon;
+                            bug.CommonalitySummary = commonality.Summary;
+                        }
+                        catch { /* commonality is a bonus signal — don't fail the fetch over it */ }
+
+                        string commonFlag = bug.IsCommon ? $" ⚠ COMMON — also seen in {bug.CommonalitySummary}" : "";
+
+                        if (bug.IsClosed)
+                        {
+                            bug.OneLineSummary = "Closed.";
+                            Log($"  → {bug.Key}: Closed.{commonFlag}");
+                            continue;
+                        }
+
+                        SetStatus($"Analyzing linked bug {bug.Key}...");
+                        try
+                        {
+                            var detail = await _fetchService.FetchLinkedBugDetailAsync(bug.Key);
+
+                            if (claudeMode)
+                            {
+                                // Claude mode makes no model calls anywhere — keep this factual, not AI-generated.
+                                bug.OneLineSummary = detail.RecentComments.Count > 0
+                                    ? $"{detail.Status} — latest comment: {detail.RecentComments.Last().Body}"
+                                    : detail.Status;
+                            }
+                            else
+                            {
+                                var bugPrompt = _fetchService.BuildLinkedBugOneSentencePrompt(detail);
+                                var bugResult = bedrockMode
+                                    ? await _bedrockService.AnalyzeAsync(bugPrompt, model, _cts.Token)
+                                    : await _ollamaService.AnalyzeAsync(bugPrompt, model, _cts.Token);
+                                bug.OneLineSummary = bugResult.Success
+                                    ? bugResult.Content.Trim()
+                                    : $"{detail.Status} (analysis failed: {bugResult.ErrorMessage})";
+                            }
+                            Log($"  → {bug.Key}: {bug.OneLineSummary}{commonFlag}");
+                        }
+                        catch (Exception ex)
+                        {
+                            bug.OneLineSummary = $"(could not fetch: {ex.Message})";
+                            Log($"  ⚠ {bug.Key}: {ex.Message}");
+                        }
+                    }
+                }
+
                 // Step 2: Read text attachments
                 SetStatus("Reading attachments...");
                 SetProgress(2, 6, "Attachments");
@@ -272,6 +333,14 @@ namespace JiraWorklogViewer
                 sb.AppendLine($"  - {a.Filename} ({a.Status})");
             sb.AppendLine();
             sb.AppendLine($"Comments: {ticket.Comments.Count}");
+            sb.AppendLine();
+            sb.AppendLine($"Linked Bugs: {ticket.LinkedBugs.Count}");
+            foreach (var b in ticket.LinkedBugs)
+            {
+                string flag = b.IsCommon ? $" ⚠ COMMON — also seen in {b.CommonalitySummary}" : "";
+                sb.AppendLine($"  [{b.Key}] {b.Summary} ({b.Status}):{flag} {b.OneLineSummary}");
+            }
+            sb.AppendLine();
             sb.AppendLine($"Patterns matched: {patterns.Count}");
             sb.AppendLine();
             sb.AppendLine($"Similar Jira tickets: {similar.JiraMatches.Count}");

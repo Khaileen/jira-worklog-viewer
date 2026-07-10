@@ -47,18 +47,20 @@ namespace JiraWorklogViewer
             Top = screen.Top + 10;
 
             // Start expanded since it will have focus on first show
-            Width = screen.Width * 0.25;
-            Height = screen.Height * 0.50;
+            Width = screen.Width * 0.25 * App.Settings.UiScale;
+            Height = screen.Height * 0.50 * App.Settings.UiScale;
+            MinWidth = 250 * App.Settings.UiScale;
+            MinHeight = 150 * App.Settings.UiScale;
         }
 
         private void Window_Activated(object sender, EventArgs e)
         {
             // Get the screen this window is on
             var screen = GetCurrentScreen();
-            
-            // Expand to 25% width, 50% height of monitor
-            Width = screen.WorkingArea.Width * 0.25;
-            Height = screen.WorkingArea.Height * 0.50;
+
+            // Expand to 25% width, 50% height of monitor, scaled up so scaled content isn't clipped
+            Width = screen.WorkingArea.Width * 0.25 * App.Settings.UiScale;
+            Height = screen.WorkingArea.Height * 0.50 * App.Settings.UiScale;
 
             // Show all controls
             SetExpandedMode(true);
@@ -66,16 +68,10 @@ namespace JiraWorklogViewer
 
         private void Window_Deactivated(object sender, EventArgs e)
         {
-            // Get the screen this window is on
-            var screen = GetCurrentScreen();
-
-            // Shrink to compact size
-            Width = CompactWidth;
-            Height = CompactHeight;
-
-            // Snap to upper-left corner of the monitor
-            Left = screen.WorkingArea.Left + 10;
-            Top = screen.WorkingArea.Top + 10;
+            // Shrink to compact size, scaled up so scaled content isn't clipped.
+            // Left/Top are intentionally left untouched — the window stays wherever the user put it.
+            Width = CompactWidth * App.Settings.UiScale;
+            Height = CompactHeight * App.Settings.UiScale;
 
             // Hide most controls, show only timer and buttons
             SetExpandedMode(false);

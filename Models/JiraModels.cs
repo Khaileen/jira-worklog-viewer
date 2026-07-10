@@ -93,6 +93,7 @@ namespace JiraWorklogViewer.Models
     {
         public string summary { get; set; }
         public JiraWorklogContainer worklog { get; set; }
+        public JiraStatusField status { get; set; }
     }
 
     public class JiraWorklogContainer
@@ -142,6 +143,36 @@ namespace JiraWorklogViewer.Models
     {
         public List<string> errorMessages { get; set; }
         public Dictionary<string, string> errors { get; set; }
+    }
+
+    /// <summary>
+    /// A ticket in "Approved; Ready to stage" assigned to the current user, with its Staging Date.
+    /// </summary>
+    public class StagingTicket
+    {
+        public string Key { get; set; }
+        public string Summary { get; set; }
+        public string Status { get; set; }
+        public DateTime? StagingDate { get; set; }
+    }
+
+    // Jira API response models for the staging-ready ticket search
+    public class JiraStagingIssueFields
+    {
+        public string summary { get; set; }
+        public JiraStatusField status { get; set; }
+        public string customfield_11687 { get; set; }  // Staging Date
+    }
+
+    public class JiraStagingIssue
+    {
+        public string key { get; set; }
+        public JiraStagingIssueFields fields { get; set; }
+    }
+
+    public class JiraStagingSearchResponse
+    {
+        public List<JiraStagingIssue> issues { get; set; }
     }
 
     /// <summary>

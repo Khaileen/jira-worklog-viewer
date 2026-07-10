@@ -81,6 +81,23 @@ namespace JiraWorklogViewer.Services
             string attachmentNames = string.Join(" ", attachments.Select(a => a.filename));
             string carrier = DetectCarrier(summary, description, attachmentNames);
 
+            var linkedBugs = new List<JiraFetchLinkedBug>();
+            foreach (var link in fields?.issuelinks ?? new List<JiraIssueLinkRaw>())
+            {
+                var linked = link.outwardIssue ?? link.inwardIssue;
+                if (linked?.fields == null) continue;
+                if (!string.Equals(linked.fields.issuetype?.name, "Bug", StringComparison.OrdinalIgnoreCase)) continue;
+                if (linkedBugs.Any(b => b.Key == linked.key)) continue;
+
+                linkedBugs.Add(new JiraFetchLinkedBug
+                {
+                    Key      = linked.key,
+                    Summary  = linked.fields.summary ?? "(no summary)",
+                    Status   = linked.fields.status?.name ?? "Unknown",
+                    IsClosed = linked.fields.status?.statusCategory?.key == "done"
+                });
+            }
+
             string outputDir     = Path.Combine(OutputBase, carrier, ticketNumber);
             string attachmentDir = Path.Combine(outputDir, "attachments");
             Directory.CreateDirectory(attachmentDir);
@@ -155,9 +172,83 @@ namespace JiraWorklogViewer.Services
                 Carrier      = carrier,
                 Attachments  = downloadResults,
                 Comments     = comments,
+                LinkedBugs   = linkedBugs,
                 OutputDir    = outputDir,
                 AttachmentDir = attachmentDir
             };
+        }
+
+        // ---------------------------------------------------------------------------
+        // Linked bug analysis — lighter than the full jira-fetch pipeline: status +
+        // last few comments only, no attachments/excel/patterns/similar-ticket search.
+        // ---------------------------------------------------------------------------
+        public async Task<JiraFetchLinkedBugDetail> FetchLinkedBugDetailAsync(string bugKey)
+        {
+            var url  = $"{_jiraBaseUrl}/rest/api/3/issue/{bugKey}?fields=summary,status,assignee";
+            var resp = await _jiraClient.GetAsync(url);
+            if (!resp.IsSuccessStatusCode)
+                throw new Exception($"Jira {resp.StatusCode}: {bugKey}");
+
+            var json   = await resp.Content.ReadAsStringAsync();
+            var data   = JsonConvert.DeserializeObject<JiraIssueRaw>(json);
+            var fields = data.fields;
+
+            var comments = new List<JiraFetchComment>();
+            try
+            {
+                var cUrl  = $"{_jiraBaseUrl}/rest/api/3/issue/{bugKey}/comment?startAt=0&maxResults=100";
+                var cResp = await _jiraClient.GetAsync(cUrl);
+                if (cResp.IsSuccessStatusCode)
+                {
+                    var cJson = await cResp.Content.ReadAsStringAsync();
+                    var cPage = JsonConvert.DeserializeObject<JiraCommentPageRaw>(cJson);
+                    foreach (var c in cPage?.comments ?? new List<JiraCommentRaw>())
+                        comments.Add(new JiraFetchComment
+                        {
+                            Author  = c.author?.displayName ?? "Unknown",
+                            Created = (c.created ?? "").Substring(0, Math.Min(10, (c.created ?? "").Length)),
+                            Body    = AdfToText(c.body)
+                        });
+                }
+            }
+            catch { }
+
+            return new JiraFetchLinkedBugDetail
+            {
+                Key            = bugKey,
+                Summary        = fields?.summary ?? "(no summary)",
+                Status         = fields?.status?.name ?? "Unknown",
+                Assignee       = fields?.assignee?.displayName ?? "Unassigned",
+                RecentComments = comments.Count > 3 ? comments.Skip(comments.Count - 3).ToList() : comments
+            };
+        }
+
+        /// <summary>
+        /// One-sentence status/hold-up summary for a single non-closed linked bug.
+        /// </summary>
+        public string BuildLinkedBugOneSentencePrompt(JiraFetchLinkedBugDetail bug)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Summarize this linked Bug ticket's CURRENT state in EXACTLY ONE sentence.");
+            sb.AppendLine("Include the current status, and any hold-up/blocker/waiting-on if one is mentioned — otherwise say what's actively happening.");
+            sb.AppendLine("Output ONLY the one sentence. No preamble, no bullet point, no restating the ticket key.");
+            sb.AppendLine();
+            sb.AppendLine($"Ticket: {bug.Key} — {bug.Summary}");
+            sb.AppendLine($"Status: {bug.Status}");
+            sb.AppendLine($"Assignee: {bug.Assignee}");
+            if (bug.RecentComments.Count > 0)
+            {
+                sb.AppendLine("Recent comments (oldest to newest):");
+                foreach (var c in bug.RecentComments)
+                    sb.AppendLine($"- ({c.Created}, {c.Author}): {CleanComment(c.Body, c.Author)}");
+            }
+            else
+            {
+                sb.AppendLine("No comments.");
+            }
+            sb.AppendLine();
+            sb.AppendLine("One-sentence summary:");
+            return sb.ToString();
         }
 
         // ---------------------------------------------------------------------------
@@ -242,23 +333,31 @@ namespace JiraWorklogViewer.Services
         }
 
         // ---------------------------------------------------------------------------
-        // Similar tickets
+        // Keyword extraction — shared by similar-ticket search and commonality check
         // ---------------------------------------------------------------------------
-        public async Task<JiraFetchSimilarTickets> FindSimilarTicketsAsync(string ticketNumber, string summary, string description)
-        {
-            var stopWords = new HashSet<string> { "a","an","the","and","or","for","to","of","in","is","it","its","be","by","do","no","so","at","on","up","if","as","fix","fixing","update","change","add","misc","issue","issues","sending","sent","when","with","from","that","this","not","auto","base" };
+        private static readonly HashSet<string> StopWords = new HashSet<string> { "a","an","the","and","or","for","to","of","in","is","it","its","be","by","do","no","so","at","on","up","if","as","fix","fixing","update","change","add","misc","issue","issues","sending","sent","when","with","from","that","this","not","auto","base" };
 
-            var summaryKw = Regex.Split(summary, @"[\s\-\/]+")
+        private List<string> ExtractKeywords(string summary, string description)
+        {
+            var summaryKw = Regex.Split(summary ?? "", @"[\s\-\/]+")
                 .Select(w => Regex.Replace(w, @"[^a-zA-Z0-9]", ""))
-                .Where(w => w.Length >= 2 && !stopWords.Contains(w.ToLowerInvariant()))
+                .Where(w => w.Length >= 2 && !StopWords.Contains(w.ToLowerInvariant()))
                 .Distinct().ToList();
 
             var descKw = Regex.Matches(description ?? "", @"\b[A-Z][a-zA-Z]{3,}|[a-z]+[A-Z][a-zA-Z]+|[A-Z]{2,3}\b")
                 .Cast<Match>().Select(m => Regex.Replace(m.Value, @"[^a-zA-Z0-9]", ""))
-                .Where(w => w.Length >= 3 && !stopWords.Contains(w.ToLowerInvariant()))
+                .Where(w => w.Length >= 3 && !StopWords.Contains(w.ToLowerInvariant()))
                 .Distinct().ToList();
 
-            var keywords = descKw.Concat(summaryKw).Distinct().Take(7).ToList();
+            return descKw.Concat(summaryKw).Distinct().Take(7).ToList();
+        }
+
+        // ---------------------------------------------------------------------------
+        // Similar tickets
+        // ---------------------------------------------------------------------------
+        public async Task<JiraFetchSimilarTickets> FindSimilarTicketsAsync(string ticketNumber, string summary, string description)
+        {
+            var keywords = ExtractKeywords(summary, description);
             var result   = new JiraFetchSimilarTickets();
             if (keywords.Count == 0) return result;
 
@@ -305,6 +404,83 @@ namespace JiraWorklogViewer.Services
                         Url    = mr.web_url
                     }).ToList();
                 }
+            }
+            catch { }
+
+            return result;
+        }
+
+        // ---------------------------------------------------------------------------
+        // Bug commonality check — is this bug pattern occurring in other carriers/states?
+        // ---------------------------------------------------------------------------
+        private static readonly HashSet<string> UsStateCodes = new HashSet<string> {
+            "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+            "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+            "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
+        };
+
+        private string ExtractStateCode(string summary)
+        {
+            foreach (Match m in Regex.Matches(summary ?? "", @"\b([A-Z]{2})\b"))
+                if (UsStateCodes.Contains(m.Value)) return m.Value;
+            return null;
+        }
+
+        /// <summary>
+        /// Flags a bug as "common" if similar tickets (by summary keywords) turn up for 2+ distinct
+        /// carriers, or the same carrier shows up in 2+ distinct states. Searches all statuses —
+        /// a pattern recurring across several currently-open tickets is just as meaningful as closed ones.
+        /// </summary>
+        public async Task<BugCommonalityResult> CheckBugCommonalityAsync(string ticketKey, string summary)
+        {
+            var result = new BugCommonalityResult();
+            var keywords = ExtractKeywords(summary, null);
+            if (keywords.Count == 0) return result;
+
+            try
+            {
+                string kw  = string.Join(" AND ", keywords.Take(3).Select(k => $"summary ~ \"{k}\""));
+                string jql = $"project in (CRM, ITC) AND ({kw}) AND issue != {ticketKey}";
+                var body   = JsonConvert.SerializeObject(new { jql, fields = new[] { "summary", "status", "updated" }, maxResults = 25 });
+                var resp   = await _jiraClient.PostAsync($"{_jiraBaseUrl}/rest/api/3/search/jql",
+                    new StringContent(body, Encoding.UTF8, "application/json"));
+                if (!resp.IsSuccessStatusCode) return result;
+
+                var json = await resp.Content.ReadAsStringAsync();
+                var data = JsonConvert.DeserializeObject<JiraSearchRaw>(json);
+
+                foreach (var issue in data?.issues ?? new List<JiraIssueRaw>())
+                {
+                    string mSummary = issue.fields?.summary ?? "";
+                    result.Matches.Add(new JiraFetchMatch
+                    {
+                        Key     = issue.key,
+                        Summary = mSummary,
+                        Status  = issue.fields?.status?.name ?? "",
+                        Updated = (issue.fields?.updated ?? "").Substring(0, Math.Min(10, (issue.fields?.updated ?? "").Length))
+                    });
+                }
+
+                var carrierStates = result.Matches
+                    .Select(m => new { Carrier = DetectCarrier(m.Summary, "", ""), State = ExtractStateCode(m.Summary) })
+                    .Where(x => x.Carrier != "Unknown")
+                    .ToList();
+
+                var distinctCarriers   = carrierStates.Select(x => x.Carrier).Distinct().ToList();
+                bool multiStateCarrier = carrierStates
+                    .Where(x => x.State != null)
+                    .GroupBy(x => x.Carrier)
+                    .Any(g => g.Select(x => x.State).Distinct().Count() >= 2);
+
+                result.Carriers  = distinctCarriers;
+                result.IsCommon  = distinctCarriers.Count >= 2 || multiStateCarrier;
+                result.Summary   = string.Join(", ", carrierStates
+                    .GroupBy(x => x.Carrier)
+                    .Select(g =>
+                    {
+                        var states = g.Select(x => x.State).Where(s => s != null).Distinct().ToList();
+                        return states.Count > 0 ? $"{g.Key} ({string.Join("/", states)})" : g.Key;
+                    }));
             }
             catch { }
 
@@ -403,7 +579,8 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine("IMPORTANT — READ IN THIS ORDER:");
             sb.AppendLine("1. Ticket status and summary (tells you the current state)");
             sb.AppendLine("2. Comments (contain the REAL story — root causes, fixes, decisions)");
-            sb.AppendLine("3. Attachments (supporting evidence only — do NOT base your analysis primarily on attachment content)");
+            sb.AppendLine("3. Linked Bugs (may reveal blockers or root causes not in this ticket's own comments)");
+            sb.AppendLine("4. Attachments (supporting evidence only — do NOT base your analysis primarily on attachment content)");
             sb.AppendLine();
             sb.AppendLine($"## Ticket: {ticket.TicketNumber}");
             sb.AppendLine($"- **Summary:** {ticket.Summary}");
@@ -420,6 +597,9 @@ namespace JiraWorklogViewer.Services
             }
             sb.AppendLine("## Comments (PRIMARY SOURCE — read these first)");
             sb.AppendLine(commentsSection);
+            sb.AppendLine();
+            sb.AppendLine("## Linked Bugs");
+            sb.AppendLine(BuildLinkedBugsSection(ticket.LinkedBugs));
             sb.AppendLine();
             sb.AppendLine("## Description");
             sb.AppendLine(ticket.Description);
@@ -502,6 +682,9 @@ namespace JiraWorklogViewer.Services
             else
                 sb.AppendLine("No comments.");
             sb.AppendLine();
+            sb.AppendLine("## Linked Bugs");
+            sb.AppendLine(BuildLinkedBugsSection(ticket.LinkedBugs));
+            sb.AppendLine();
             sb.AppendLine("## Attachments");
             foreach (var att in ticket.Attachments)
             {
@@ -540,6 +723,22 @@ namespace JiraWorklogViewer.Services
             string outputFile = Path.Combine(ticket.OutputDir, $"{ticket.TicketNumber}_7point.md");
             File.WriteAllText(outputFile, sb.ToString(), Encoding.UTF8);
             return outputFile;
+        }
+
+        /// <summary>
+        /// Renders linked bugs as "- [KEY] Summary (Status): one-line summary" — closed bugs
+        /// just say "Closed.", open ones show whatever OneLineSummary was filled in with.
+        /// </summary>
+        private string BuildLinkedBugsSection(List<JiraFetchLinkedBug> linkedBugs)
+        {
+            if (linkedBugs == null || linkedBugs.Count == 0) return "No linked bugs.";
+
+            return string.Join("\n", linkedBugs.Select(b =>
+            {
+                string flag = b.IsCommon ? $" ⚠ COMMON — also seen in {b.CommonalitySummary}." : "";
+                string line = b.OneLineSummary ?? (b.IsClosed ? "Closed." : "(not analyzed)");
+                return $"- [{b.Key}] {b.Summary} ({b.Status}):{flag} {line}";
+            }));
         }
 
         // ---------------------------------------------------------------------------
@@ -686,8 +885,48 @@ namespace JiraWorklogViewer.Services
         public string Carrier { get; set; }
         public List<JiraFetchAttachment> Attachments { get; set; } = new List<JiraFetchAttachment>();
         public List<JiraFetchComment> Comments { get; set; } = new List<JiraFetchComment>();
+        public List<JiraFetchLinkedBug> LinkedBugs { get; set; } = new List<JiraFetchLinkedBug>();
         public string OutputDir { get; set; }
         public string AttachmentDir { get; set; }
+    }
+
+    /// <summary>
+    /// A Bug linked to the fetched ticket. Closed bugs are never analyzed further —
+    /// OneLineSummary is just "Closed." Open bugs get a lighter fetch + one-sentence AI summary.
+    /// </summary>
+    public class JiraFetchLinkedBug
+    {
+        public string Key { get; set; }
+        public string Summary { get; set; }
+        public string Status { get; set; }
+        public bool IsClosed { get; set; }
+        public string OneLineSummary { get; set; }
+        public bool IsCommon { get; set; }
+        public string CommonalitySummary { get; set; }
+    }
+
+    /// <summary>
+    /// Lighter-than-jira-fetch detail for a single linked bug — status + last few comments only,
+    /// no attachments/excel/patterns/similar-ticket search.
+    /// </summary>
+    public class JiraFetchLinkedBugDetail
+    {
+        public string Key { get; set; }
+        public string Summary { get; set; }
+        public string Status { get; set; }
+        public string Assignee { get; set; }
+        public List<JiraFetchComment> RecentComments { get; set; } = new List<JiraFetchComment>();
+    }
+
+    /// <summary>
+    /// Result of checking whether a bug pattern recurs across carriers/states.
+    /// </summary>
+    public class BugCommonalityResult
+    {
+        public bool IsCommon { get; set; }
+        public List<string> Carriers { get; set; } = new List<string>();
+        public string Summary { get; set; } = "";
+        public List<JiraFetchMatch> Matches { get; set; } = new List<JiraFetchMatch>();
     }
 
     public class JiraFetchAttachment
@@ -751,12 +990,37 @@ namespace JiraWorklogViewer.Services
         public string updated { get; set; }
         public object description { get; set; }
         public List<JiraAttachmentRaw> attachment { get; set; }
-        public List<object> issuelinks { get; set; }
+        public List<JiraIssueLinkRaw> issuelinks { get; set; }
     }
 
-    public class JiraStatusRaw   { public string name { get; set; } }
+    public class JiraStatusRaw
+    {
+        public string name { get; set; }
+        public JiraStatusCategoryRaw statusCategory { get; set; }
+    }
+    public class JiraStatusCategoryRaw { public string key { get; set; } }  // "new" | "indeterminate" | "done"
     public class JiraPersonRaw   { public string displayName { get; set; } }
     public class JiraPriorityRaw { public string name { get; set; } }
+    public class JiraIssueTypeRaw { public string name { get; set; } }
+
+    public class JiraIssueLinkRaw
+    {
+        public JiraLinkedIssueRaw inwardIssue { get; set; }
+        public JiraLinkedIssueRaw outwardIssue { get; set; }
+    }
+
+    public class JiraLinkedIssueRaw
+    {
+        public string key { get; set; }
+        public JiraLinkedIssueFieldsRaw fields { get; set; }
+    }
+
+    public class JiraLinkedIssueFieldsRaw
+    {
+        public string summary { get; set; }
+        public JiraStatusRaw status { get; set; }
+        public JiraIssueTypeRaw issuetype { get; set; }
+    }
 
     public class JiraAttachmentRaw
     {

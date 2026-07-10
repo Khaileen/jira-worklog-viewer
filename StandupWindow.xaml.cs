@@ -116,10 +116,43 @@ namespace JiraWorklogViewer
                 var yesterdayGroups = await _jiraService.GetMyWorklogsAsync(yesterday, yesterday);
                 var todayGroups = await _jiraService.GetMyWorklogsAsync(today, today);
 
-                var allTickets = yesterdayGroups
+                var loggedTickets = yesterdayGroups
                     .SelectMany(g => g.Worklogs)
                     .Concat(todayGroups.SelectMany(g => g.Worklogs))
                     .Select(w => w.IssueKey)
+                    .Distinct()
+                    .ToList();
+
+                var todayLoggedKeys = new HashSet<string>(
+                    todayGroups.SelectMany(g => g.Worklogs).Select(w => w.IssueKey));
+
+                // Tickets currently in DEV-In Progress with no worklog logged TODAY — surfaced under
+                // ## Today so active work doesn't fall out of the stand-up.
+                SetStatus("Checking active tickets...");
+                var assignedIssues = await _jiraService.GetAssignedIssuesAsync();
+                var wipOnlyIssues = assignedIssues
+                    .Where(i => string.Equals(i.Status, "DEV-In Progress", StringComparison.OrdinalIgnoreCase))
+                    .Where(i => !todayLoggedKeys.Contains(i.Key))
+                    .ToList();
+
+                // Tickets "Approved; Ready to stage" — staging today go under ## Today, the rest
+                // under a ## For Staging section (omitted entirely if empty).
+                SetStatus("Checking staging tickets...");
+                var stagingCandidates = await _jiraService.GetStagingReadyTicketsAsync();
+                var stagingTodayTickets = stagingCandidates
+                    .Where(t => t.StagingDate.HasValue && t.StagingDate.Value.Date == today.Date)
+                    .Where(t => !todayLoggedKeys.Contains(t.Key) && !wipOnlyIssues.Any(w => w.Key == t.Key))
+                    .ToList();
+                var stagingTodayKeys = new HashSet<string>(stagingTodayTickets.Select(t => t.Key));
+                var forStagingTickets = stagingCandidates
+                    .Where(t => !stagingTodayKeys.Contains(t.Key))
+                    .Where(t => !loggedTickets.Contains(t.Key) && !wipOnlyIssues.Any(w => w.Key == t.Key))
+                    .ToList();
+
+                var allTickets = loggedTickets
+                    .Concat(wipOnlyIssues.Select(i => i.Key))
+                    .Concat(stagingTodayTickets.Select(t => t.Key))
+                    .Concat(forStagingTickets.Select(t => t.Key))
                     .Distinct()
                     .ToList();
 
@@ -131,10 +164,11 @@ namespace JiraWorklogViewer
                     return;
                 }
 
-                // Step 2: Fetch ticket details + comments for each unique ticket
+                // Step 2: Fetch ticket details + comments + status history for each unique ticket
                 SetStatus(string.Format("Fetching details for {0} ticket(s)...", allTickets.Count));
                 var ticketDetails = new Dictionary<string, TicketDetails>();
                 var ticketComments = new Dictionary<string, List<TicketComment>>();
+                var ticketChangelogs = new Dictionary<string, List<TicketStatusChange>>();
 
                 foreach (var key in allTickets)
                 {
@@ -153,39 +187,21 @@ namespace JiraWorklogViewer
                     {
                         // Skip tickets we can't access
                     }
+
+                    try
+                    {
+                        ticketChangelogs[key] = await _jiraService.GetTicketChangelogAsync(key);
+                    }
+                    catch
+                    {
+                        ticketChangelogs[key] = new List<TicketStatusChange>();
+                    }
                 }
 
                 // Step 3: Claude mode — skip analysis, output raw entries + prompt
                 if (claudeMode)
                 {
-                    var raw = new StringBuilder();
-                    raw.AppendLine(string.Format("## Yesterday ({0})", yesterday.ToString("yyyy-MM-dd dddd")));
-                    raw.AppendLine();
-                    foreach (var g in yesterdayGroups)
-                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
-                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
-                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
-                                wl.AuthorDisplayName ?? "Unknown",
-                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
-                    raw.AppendLine();
-                    raw.AppendLine(string.Format("## Today ({0})", today.ToString("yyyy-MM-dd dddd")));
-                    raw.AppendLine();
-                    foreach (var g in todayGroups)
-                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
-                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
-                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
-                                wl.AuthorDisplayName ?? "Unknown",
-                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
-                    raw.AppendLine();
-                    raw.AppendLine("---");
-                    raw.AppendLine();
-                    raw.AppendLine("Using the worklog entries above, generate a daily stand-up summary:");
-                    raw.AppendLine("- Organize by: ## Yesterday, then ## Today");
-                    raw.AppendLine("- Under each section, one ### per ticket (KEY — Summary | Status | Assignee)");
-                    raw.AppendLine("- Bullets from worklog comments only — no invented content");
-                    raw.AppendLine("- End with: ## Blockers / Waiting On");
-
-                    _lastGeneratedContent = raw.ToString();
+                    _lastGeneratedContent = BuildRawWorklogText(yesterday, today, yesterdayGroups, todayGroups, ticketChangelogs, wipOnlyIssues, stagingTodayTickets, forStagingTickets);
                     txtOutput.Text = _lastGeneratedContent;
                     txtMetrics.Text = "Claude mode — raw data prepared, no model call made.";
                     btnCopy.IsEnabled = true;
@@ -198,35 +214,10 @@ namespace JiraWorklogViewer
                 // Step 3b: Bedrock mode — single call with all raw data
                 if (bedrockMode)
                 {
-                    var raw = new StringBuilder();
-                    raw.AppendLine(string.Format("## Yesterday ({0})", yesterday.ToString("yyyy-MM-dd dddd")));
-                    raw.AppendLine();
-                    foreach (var g in yesterdayGroups)
-                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
-                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
-                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
-                                wl.AuthorDisplayName ?? "Unknown",
-                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
-                    raw.AppendLine();
-                    raw.AppendLine(string.Format("## Today ({0})", today.ToString("yyyy-MM-dd dddd")));
-                    raw.AppendLine();
-                    foreach (var g in todayGroups)
-                        foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
-                            raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
-                                wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
-                                wl.AuthorDisplayName ?? "Unknown",
-                                string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
-                    raw.AppendLine();
-                    raw.AppendLine("---");
-                    raw.AppendLine();
-                    raw.AppendLine("Using the worklog entries above, generate a daily stand-up summary:");
-                    raw.AppendLine("- Organize by: ## Yesterday, then ## Today");
-                    raw.AppendLine("- Under each section, one ### per ticket (KEY — Summary | Status | Assignee)");
-                    raw.AppendLine("- Bullets from worklog comments only — no invented content");
-                    raw.AppendLine("- End with: ## Blockers / Waiting On");
+                    var raw = BuildRawWorklogText(yesterday, today, yesterdayGroups, todayGroups, ticketChangelogs, wipOnlyIssues, stagingTodayTickets, forStagingTickets);
 
                     SetStatus(string.Format("Running stand-up analysis with {0}...", model));
-                    var bedrockResult = await _bedrockService.AnalyzeAsync(raw.ToString(), model, _cts.Token);
+                    var bedrockResult = await _bedrockService.AnalyzeAsync(raw, model, _cts.Token);
 
                     _lastGeneratedContent = bedrockResult.Success ? bedrockResult.Content : "(Bedrock analysis failed: " + bedrockResult.ErrorMessage + ")";
                     txtOutput.Text = _lastGeneratedContent;
@@ -269,6 +260,7 @@ namespace JiraWorklogViewer
                         ticketComments.TryGetValue(key, out var comments);
 
                         output.AppendLine(BuildTicketHeader(key, ticketGroup.ToList(), details));
+                        AppendStatusChangeBullets(output, key, yesterday, ticketChangelogs);
 
                         // Per worklog entry
                         var ticketBullets = new StringBuilder();
@@ -318,6 +310,7 @@ namespace JiraWorklogViewer
                         ticketComments.TryGetValue(key, out var comments);
 
                         output.AppendLine(BuildTicketHeader(key, ticketGroup.ToList(), details));
+                        AppendStatusChangeBullets(output, key, today, ticketChangelogs);
 
                         var ticketBullets = new StringBuilder();
                         foreach (var wl in ticketGroup.OrderBy(w => w.Started))
@@ -346,10 +339,45 @@ namespace JiraWorklogViewer
                         output.AppendLine();
                     }
                 }
-                else
+
+                foreach (var issue in wipOnlyIssues)
+                {
+                    ticketDetails.TryGetValue(issue.Key, out var details);
+                    output.AppendLine(BuildTicketHeader(issue.Key, new List<WorklogEntry>(), details));
+                    output.AppendLine(string.Format("- No time logged today — currently {0}.", issue.Status));
+                    AppendStatusChangeBullets(output, issue.Key, today, ticketChangelogs);
+                    output.AppendLine();
+                }
+
+                foreach (var ticket in stagingTodayTickets)
+                {
+                    ticketDetails.TryGetValue(ticket.Key, out var details);
+                    output.AppendLine(BuildTicketHeader(ticket.Key, new List<WorklogEntry>(), details));
+                    output.AppendLine(string.Format("- No time logged today — staged for release today ({0}).", ticket.Status));
+                    AppendStatusChangeBullets(output, ticket.Key, today, ticketChangelogs);
+                    output.AppendLine();
+                }
+
+                if (!todayTickets.Any() && !wipOnlyIssues.Any() && !stagingTodayTickets.Any())
                 {
                     output.AppendLine("- No work logged yet today.");
                     output.AppendLine();
+                }
+
+                // --- FOR STAGING (omitted entirely if empty) ---
+                if (forStagingTickets.Any())
+                {
+                    output.AppendLine("## For Staging");
+                    output.AppendLine();
+
+                    foreach (var ticket in forStagingTickets)
+                    {
+                        ticketDetails.TryGetValue(ticket.Key, out var details);
+                        output.AppendLine(BuildTicketHeader(ticket.Key, new List<WorklogEntry>(), details));
+                        output.AppendLine(string.Format("- Staging Date: {0}",
+                            ticket.StagingDate.HasValue ? ticket.StagingDate.Value.ToString("yyyy-MM-dd") : "(not set)"));
+                        output.AppendLine();
+                    }
                 }
 
                 // --- BLOCKERS ---
@@ -363,7 +391,8 @@ namespace JiraWorklogViewer
                     totalResponseSec, totalInputTokens, totalOutputTokens,
                     (totalInputTokens * 3.0 + totalOutputTokens * 15.0) / 1_000_000.0);
 
-                SetStatus(string.Format("Stand-up generated — {0} ticket(s) analyzed.", yesterdayTickets.Count + todayTickets.Count));
+                SetStatus(string.Format("Stand-up generated — {0} ticket(s) analyzed.",
+                    yesterdayTickets.Count + todayTickets.Count + wipOnlyIssues.Count + stagingTodayTickets.Count + forStagingTickets.Count));
                 btnCopy.IsEnabled = true;
                 btnSaveMd.IsEnabled = true;
             }
@@ -382,6 +411,117 @@ namespace JiraWorklogViewer
             {
                 SetUIGenerating(false);
             }
+        }
+
+        /// <summary>
+        /// Builds the raw worklog + status-change text used by Claude/Bedrock modes, including any
+        /// DEV-In Progress tickets with no worklog logged today and any staging-ready tickets.
+        /// </summary>
+        private string BuildRawWorklogText(
+            DateTime yesterday, DateTime today,
+            List<WorklogGroup> yesterdayGroups, List<WorklogGroup> todayGroups,
+            Dictionary<string, List<TicketStatusChange>> ticketChangelogs,
+            List<JiraAssignedIssue> wipOnlyIssues,
+            List<StagingTicket> stagingTodayTickets,
+            List<StagingTicket> forStagingTickets)
+        {
+            var raw = new StringBuilder();
+            raw.AppendLine(string.Format("## Yesterday ({0})", yesterday.ToString("yyyy-MM-dd dddd")));
+            raw.AppendLine();
+            AppendRawDay(raw, yesterday, yesterdayGroups, ticketChangelogs);
+
+            raw.AppendLine();
+            raw.AppendLine(string.Format("## Today ({0})", today.ToString("yyyy-MM-dd dddd")));
+            raw.AppendLine();
+            AppendRawDay(raw, today, todayGroups, ticketChangelogs);
+
+            foreach (var issue in wipOnlyIssues)
+            {
+                raw.AppendLine(string.Format("**{0} | {1} | (no time logged) | —:** Currently {2} — no worklog entry today.",
+                    today.ToString("yyyy-MM-dd"), issue.Key, issue.Status));
+                AppendStatusChangeLines(raw, issue.Key, today, ticketChangelogs);
+            }
+
+            foreach (var ticket in stagingTodayTickets)
+            {
+                raw.AppendLine(string.Format("**{0} | {1} | (no time logged) | —:** Staged for release today ({2}).",
+                    today.ToString("yyyy-MM-dd"), ticket.Key, ticket.Status));
+                AppendStatusChangeLines(raw, ticket.Key, today, ticketChangelogs);
+            }
+
+            if (forStagingTickets.Any())
+            {
+                raw.AppendLine();
+                raw.AppendLine("## For Staging");
+                raw.AppendLine();
+                foreach (var ticket in forStagingTickets)
+                    raw.AppendLine(string.Format("**{0} | (no time logged) | —:** {1} — Staging Date: {2}",
+                        ticket.Key, ticket.Status,
+                        ticket.StagingDate.HasValue ? ticket.StagingDate.Value.ToString("yyyy-MM-dd") : "(not set)"));
+            }
+
+            raw.AppendLine();
+            raw.AppendLine("---");
+            raw.AppendLine();
+            raw.AppendLine("Using the worklog entries above, generate a daily stand-up summary:");
+            raw.AppendLine("- Organize by: ## Yesterday, then ## Today");
+            raw.AppendLine("- Under each section, one ### per ticket (KEY — Summary | Status | Assignee)");
+            raw.AppendLine("- Bullets from worklog comments only — no invented content");
+            raw.AppendLine("- Note any status changes and tickets with no time logged but currently in progress");
+            raw.AppendLine("- If a ## For Staging block is present above, reproduce it verbatim as its own ## For Staging section at the end — do not merge it into ## Today, and omit it entirely if not present");
+            raw.AppendLine("- End with: ## Blockers / Waiting On");
+
+            return raw.ToString();
+        }
+
+        /// <summary>
+        /// Appends raw worklog lines and same-day status changes for every ticket touched on the given day.
+        /// </summary>
+        private void AppendRawDay(StringBuilder raw, DateTime day, List<WorklogGroup> groups,
+            Dictionary<string, List<TicketStatusChange>> ticketChangelogs)
+        {
+            var seenKeys = new HashSet<string>();
+            foreach (var g in groups)
+            {
+                foreach (var wl in g.Worklogs.OrderBy(w => w.Started))
+                {
+                    raw.AppendLine(string.Format("**{0} | {1} | {2} | {3}:** {4}",
+                        wl.Started.ToString("yyyy-MM-dd"), wl.IssueKey, wl.TimeSpent,
+                        wl.AuthorDisplayName ?? "Unknown",
+                        string.IsNullOrWhiteSpace(wl.Comment) ? "(no comment)" : wl.Comment.Replace("\n", " ")));
+                    seenKeys.Add(wl.IssueKey);
+                }
+            }
+
+            foreach (var key in seenKeys)
+                AppendStatusChangeLines(raw, key, day, ticketChangelogs);
+        }
+
+        /// <summary>
+        /// Appends one raw line per status transition that happened on the given day.
+        /// </summary>
+        private void AppendStatusChangeLines(StringBuilder raw, string key, DateTime day,
+            Dictionary<string, List<TicketStatusChange>> ticketChangelogs)
+        {
+            if (!ticketChangelogs.TryGetValue(key, out var changes)) return;
+
+            foreach (var c in changes.Where(c => c.Created.Date == day.Date))
+                raw.AppendLine(string.Format("**{0} | {1} | status change | {2}:** {3} → {4}",
+                    c.Created.ToString("yyyy-MM-dd HH:mm"), key, c.Author, c.FromStatus, c.ToStatus));
+        }
+
+        /// <summary>
+        /// Appends '↳' bullet lines for status transitions that happened on the given day — used in the
+        /// per-ticket Ollama analysis output, under the ### header.
+        /// </summary>
+        private void AppendStatusChangeBullets(StringBuilder output, string key, DateTime day,
+            Dictionary<string, List<TicketStatusChange>> ticketChangelogs)
+        {
+            if (!ticketChangelogs.TryGetValue(key, out var changes)) return;
+
+            foreach (var c in changes.Where(c => c.Created.Date == day.Date))
+                output.AppendLine(string.Format("↳ {0} Status: {1} → {2}",
+                    c.Created.ToString("HH:mm"), c.FromStatus, c.ToStatus));
         }
 
         /// <summary>
