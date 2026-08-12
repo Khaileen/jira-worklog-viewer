@@ -1027,6 +1027,33 @@ namespace JiraWorklogViewer
             window.Show();
         }
 
+        private void BtnChat_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var creds = _credentialService.LoadCredentials();
+            if (creds == null)
+            {
+                MessageBox.Show("No credentials found.", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            string gitlabToken = Environment.GetEnvironmentVariable("GITLAB_API_TOKEN") ?? string.Empty;
+            var fetchService = new JiraFetchService(
+                creds.ServerUrl, creds.Email, creds.ApiToken, gitlabToken);
+
+            var window = new ChatWindow(fetchService);
+            window.Owner = this;
+            window.Loaded += (s, ev) => App.ApplyScale(window);
+            window.Show();
+        }
+
         #endregion
     }
 }

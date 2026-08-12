@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using JiraWorklogViewer.Models;
 using Newtonsoft.Json;
@@ -158,6 +159,10 @@ namespace JiraWorklogViewer.Services
             }
             catch { }
 
+            var worklogs = await FetchWorklogsAsync(ticketNumber);
+            bool isDone  = fields?.status?.statusCategory?.key == "done";
+            var schedule = BuildScheduleInfo(fields, worklogs, comments, updated, isDone);
+
             return new JiraFetchTicket
             {
                 TicketNumber = ticketNumber,
@@ -172,10 +177,186 @@ namespace JiraWorklogViewer.Services
                 Carrier      = carrier,
                 Attachments  = downloadResults,
                 Comments     = comments,
+                Worklogs     = worklogs,
+                Schedule     = schedule,
                 LinkedBugs   = linkedBugs,
                 OutputDir    = outputDir,
                 AttachmentDir = attachmentDir
             };
+        }
+
+        // ---------------------------------------------------------------------------
+        // Effort / schedule analysis
+        // ---------------------------------------------------------------------------
+        private JiraFetchScheduleInfo BuildScheduleInfo(
+            JiraIssueFieldsRaw fields, List<JiraFetchWorklog> worklogs,
+            List<JiraFetchComment> comments, string updated, bool isDone)
+        {
+            string programmer = fields?.customfield_11192?.FirstOrDefault()?.displayName;
+            string tester      = fields?.customfield_11193?.FirstOrDefault()?.displayName;
+
+            var info = new JiraFetchScheduleInfo
+            {
+                DevEstimateHours   = ParseHours(fields?.customfield_15528?.value),
+                QaEstimateHours    = ParseHours(fields?.customfield_15527?.value),
+                TotalEstimateHours = ParseHours(fields?.customfield_12725?.value) ?? fields?.customfield_11639
+                                     ?? (fields?.timetracking?.originalEstimateSeconds / 3600.0),
+                TotalTimeSpentSeconds = fields?.timetracking?.timeSpentSeconds ?? worklogs.Sum(w => w.TimeSpentSeconds),
+                Programmer      = programmer,
+                Tester          = tester,
+                SpecsReceived   = fields?.customfield_11702,
+                DateScheduled   = fields?.customfield_11637,
+                QaStartDate     = fields?.customfield_11690,
+                QaDeliveryDate  = fields?.customfield_11196,
+                DevDueDate      = fields?.customfield_12100,
+                QaDueDate       = fields?.customfield_12101,
+                DueDate         = fields?.duedate,
+                IsDone          = isDone
+            };
+
+            foreach (var w in worklogs)
+            {
+                if (!string.IsNullOrEmpty(programmer) && string.Equals(w.Author, programmer, StringComparison.OrdinalIgnoreCase))
+                    info.DevTimeSpentSeconds += w.TimeSpentSeconds;
+                else if (!string.IsNullOrEmpty(tester) && string.Equals(w.Author, tester, StringComparison.OrdinalIgnoreCase))
+                    info.QaTimeSpentSeconds += w.TimeSpentSeconds;
+                else
+                    info.OtherTimeSpentSeconds += w.TimeSpentSeconds;
+            }
+
+            info.DevOverEstimate   = info.DevEstimateHours.HasValue && info.DevTimeSpentSeconds / 3600.0 > info.DevEstimateHours.Value;
+            info.QaOverEstimate    = info.QaEstimateHours.HasValue && info.QaTimeSpentSeconds / 3600.0 > info.QaEstimateHours.Value;
+            info.TotalOverEstimate = info.TotalEstimateHours.HasValue && info.TotalTimeSpentSeconds / 3600.0 > info.TotalEstimateHours.Value;
+
+            if (!isDone)
+            {
+                var today = DateTime.Now.Date;
+                foreach (var (label, dateStr) in new[]
+                {
+                    ("Dev Due Date", info.DevDueDate), ("QA Due Date", info.QaDueDate),
+                    ("QA Delivery Date", info.QaDeliveryDate), ("Due Date", info.DueDate)
+                })
+                {
+                    if (DateTime.TryParse(dateStr, out var d) && d.Date < today)
+                        info.MissedTargetDates.Add($"{label} ({dateStr})");
+                }
+            }
+
+            var lastActivity = comments.Select(c => c.Created)
+                .Concat(worklogs.Select(w => w.Started))
+                .Where(d => DateTime.TryParse(d, out _))
+                .Select(d => DateTime.Parse(d))
+                .DefaultIfEmpty(DateTime.TryParse(updated, out var u) ? u : DateTime.Now.Date)
+                .Max();
+            info.LastActivityDate = lastActivity.ToString("yyyy-MM-dd");
+            info.BusinessDaysSinceActivity = BusinessDaysBetween(lastActivity.Date, DateTime.Now.Date);
+            info.IsStalled = !isDone && info.BusinessDaysSinceActivity >= 5;
+
+            return info;
+        }
+
+        private static double? ParseHours(string value) =>
+            double.TryParse(value, out var d) ? d : (double?)null;
+
+        private static int BusinessDaysBetween(DateTime from, DateTime to)
+        {
+            if (to <= from) return 0;
+            int days = 0;
+            for (var d = from.AddDays(1); d <= to; d = d.AddDays(1))
+                if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) days++;
+            return days;
+        }
+
+        /// <summary>
+        /// Renders the effort/schedule picture: estimates vs logged time (dev/qa/total), target
+        /// dates, and derived flags — over-estimate, missed target date, stalled (no recent activity).
+        /// </summary>
+        public string BuildScheduleSection(JiraFetchScheduleInfo s)
+        {
+            if (s == null) return "No effort/schedule data.";
+
+            string Hrs(int seconds) => $"{seconds / 3600.0:0.#}h";
+            string Est(double? h) => h.HasValue ? $"{h.Value:0.#}h" : "not set";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"- **Dev:** logged {Hrs(s.DevTimeSpentSeconds)} ({s.Programmer ?? "unassigned"}) vs estimate {Est(s.DevEstimateHours)}{(s.DevOverEstimate ? " ⚠ OVER ESTIMATE" : "")}");
+            sb.AppendLine($"- **QA:** logged {Hrs(s.QaTimeSpentSeconds)} ({s.Tester ?? "unassigned"}) vs estimate {Est(s.QaEstimateHours)}{(s.QaOverEstimate ? " ⚠ OVER ESTIMATE" : "")}");
+            sb.AppendLine($"- **Total:** logged {Hrs(s.TotalTimeSpentSeconds)} vs estimate {Est(s.TotalEstimateHours)}{(s.TotalOverEstimate ? " ⚠ OVER ESTIMATE" : "")}");
+            if (s.OtherTimeSpentSeconds > 0)
+                sb.AppendLine($"- Other logged time (not attributable to Programmer/Tester): {Hrs(s.OtherTimeSpentSeconds)}");
+            sb.AppendLine($"- **Target dates:** Specs Received {s.SpecsReceived ?? "n/a"} | Scheduled {s.DateScheduled ?? "n/a"} | QA Start {s.QaStartDate ?? "n/a"} | QA Delivery {s.QaDeliveryDate ?? "n/a"} | Due {s.DueDate ?? "n/a"}");
+            if (s.MissedTargetDates.Count > 0)
+                sb.AppendLine($"- ⚠ MISSED TARGET DATE(S): {string.Join(", ", s.MissedTargetDates)}");
+            sb.AppendLine($"- Last activity (comment/worklog): {s.LastActivityDate} ({s.BusinessDaysSinceActivity} business day(s) ago)");
+            if (s.IsStalled)
+                sb.AppendLine("- ⚠ STALLED: no comment or worklog activity in 5+ business days");
+            return sb.ToString();
+        }
+
+        // ---------------------------------------------------------------------------
+        // Worklogs
+        // ---------------------------------------------------------------------------
+        private async Task<List<JiraFetchWorklog>> FetchWorklogsAsync(string ticketNumber)
+        {
+            var worklogs = new List<JiraFetchWorklog>();
+            int startAt = 0;
+            try
+            {
+                do
+                {
+                    var wUrl  = $"{_jiraBaseUrl}/rest/api/3/issue/{ticketNumber}/worklog?startAt={startAt}&maxResults=100";
+                    var wResp = await _jiraClient.GetAsync(wUrl);
+                    if (!wResp.IsSuccessStatusCode) break;
+                    var wJson = await wResp.Content.ReadAsStringAsync();
+                    var wPage = JsonConvert.DeserializeObject<JiraWorklogPageRaw>(wJson);
+                    foreach (var w in wPage?.worklogs ?? new List<JiraWorklogRaw>())
+                        worklogs.Add(new JiraFetchWorklog
+                        {
+                            Author           = w.author?.displayName ?? "Unknown",
+                            Started          = (w.started ?? "").Substring(0, Math.Min(10, (w.started ?? "").Length)),
+                            TimeSpent        = w.timeSpent ?? "0m",
+                            TimeSpentSeconds = w.timeSpentSeconds,
+                            Comment          = AdfToText(w.comment)
+                        });
+                    startAt += wPage?.worklogs?.Count ?? 0;
+                    if (startAt >= (wPage?.total ?? 0)) break;
+                } while (true);
+            }
+            catch { }
+            return worklogs.OrderBy(w => w.Started).ToList();
+        }
+
+        /// <summary>
+        /// Renders worklogs as a per-author total rollup followed by the full chronological entry list.
+        /// </summary>
+        public string BuildWorklogsSection(List<JiraFetchWorklog> worklogs)
+        {
+            if (worklogs == null || worklogs.Count == 0) return "No worklogs.";
+
+            var totals = worklogs
+                .GroupBy(w => w.Author)
+                .Select(g => $"- {g.Key}: {FormatSeconds(g.Sum(w => w.TimeSpentSeconds))}")
+                .ToList();
+
+            var entries = worklogs.Select(w =>
+                $"- {w.Author} — {w.TimeSpent} ({w.Started}){(string.IsNullOrWhiteSpace(w.Comment) || w.Comment == "(no description)" ? "" : $": {w.Comment}")}");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("**Totals by author:**");
+            sb.AppendLine(string.Join("\n", totals));
+            sb.AppendLine();
+            sb.AppendLine("**Entries:**");
+            sb.AppendLine(string.Join("\n", entries));
+            return sb.ToString();
+        }
+
+        private static string FormatSeconds(int seconds)
+        {
+            int hours   = seconds / 3600;
+            int minutes = (seconds % 3600) / 60;
+            if (hours > 0 && minutes > 0) return $"{hours}h {minutes}m";
+            if (hours > 0) return $"{hours}h";
+            return $"{minutes}m";
         }
 
         // ---------------------------------------------------------------------------
@@ -411,6 +592,114 @@ namespace JiraWorklogViewer.Services
         }
 
         // ---------------------------------------------------------------------------
+        // Chat/agent search — find tickets assigned to the current user, optionally
+        // filtered by exact status name and/or carrier (client-side, via DetectCarrier).
+        // ---------------------------------------------------------------------------
+        public async Task<List<JiraFetchMatch>> SearchAssignedTicketsAsync(string status, string carrier, int maxResults = 25)
+        {
+            var result = new List<JiraFetchMatch>();
+
+            var clauses = new List<string> { "project in (CRM, ITC)", "assignee = currentUser()" };
+            if (!string.IsNullOrWhiteSpace(status))
+                clauses.Add($"status = \"{status.Replace("\"", "'")}\"");
+            string jql = string.Join(" AND ", clauses) + " ORDER BY updated DESC";
+
+            try
+            {
+                var body = JsonConvert.SerializeObject(new
+                {
+                    jql,
+                    fields = new[] { "summary", "status", "updated" },
+                    maxResults = Math.Max(1, maxResults)
+                });
+                var resp = await _jiraClient.PostAsync($"{_jiraBaseUrl}/rest/api/3/search/jql",
+                    new StringContent(body, Encoding.UTF8, "application/json"));
+                if (!resp.IsSuccessStatusCode) return result;
+
+                var json = await resp.Content.ReadAsStringAsync();
+                var data = JsonConvert.DeserializeObject<JiraSearchRaw>(json);
+
+                foreach (var issue in data?.issues ?? new List<JiraIssueRaw>())
+                {
+                    string summary = issue.fields?.summary ?? "";
+                    if (!string.IsNullOrWhiteSpace(carrier) &&
+                        !string.Equals(DetectCarrier(summary, "", ""), carrier, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    result.Add(new JiraFetchMatch
+                    {
+                        Key     = issue.key,
+                        Summary = summary,
+                        Status  = issue.fields?.status?.name ?? "",
+                        Updated = (issue.fields?.updated ?? "").Substring(0, Math.Min(10, (issue.fields?.updated ?? "").Length))
+                    });
+                }
+            }
+            catch { }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Runs the same pipeline as the single-ticket jira-fetch Bedrock path (linked bugs,
+        /// attachments, Excel conversion, patterns, similar tickets, 7-point analysis, save MD,
+        /// log metrics) so the chat agent's analyze_ticket tool matches the manual-fetch behavior.
+        /// </summary>
+        public async Task<string> AnalyzeTicketFullAsync(string ticketNumber, BedrockService bedrock, string model, CancellationToken ct)
+        {
+            var ticket = await FetchTicketAsync(ticketNumber);
+
+            foreach (var bug in ticket.LinkedBugs)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var commonality = await CheckBugCommonalityAsync(bug.Key, bug.Summary);
+                    bug.IsCommon = commonality.IsCommon;
+                    bug.CommonalitySummary = commonality.Summary;
+                }
+                catch { /* commonality is a bonus signal — don't fail the fetch over it */ }
+
+                if (bug.IsClosed)
+                {
+                    bug.OneLineSummary = "Closed.";
+                    continue;
+                }
+
+                try
+                {
+                    var detail = await FetchLinkedBugDetailAsync(bug.Key);
+                    var bugPrompt = BuildLinkedBugOneSentencePrompt(detail);
+                    var bugResult = await bedrock.AnalyzeAsync(bugPrompt, model, ct);
+                    bug.OneLineSummary = bugResult.Success
+                        ? bugResult.Content.Trim()
+                        : $"{detail.Status} (analysis failed: {bugResult.ErrorMessage})";
+                }
+                catch (Exception ex)
+                {
+                    bug.OneLineSummary = $"(could not fetch: {ex.Message})";
+                }
+            }
+
+            var textAttachments  = ReadTextAttachments(ticket);
+            var excelConversions = ConvertExcelAttachments(ticket);
+            string keywords = string.Join(" ", ticket.Summary.Split(' ').Where(w => w.Length > 4).Take(3));
+            var patterns = SearchPatterns(keywords);
+            var similar  = await FindSimilarTicketsAsync(ticketNumber, ticket.Summary, ticket.Description);
+
+            var analysisPrompt = Build7PointPrompt(ticket, textAttachments, patterns, similar, null);
+            var result = await bedrock.AnalyzeAsync(analysisPrompt, model, ct);
+            string analysisText = result.Success ? result.Content : $"(analysis failed: {result.ErrorMessage})";
+
+            var outputFile = BuildAndSaveMd(ticket, textAttachments, patterns, similar, analysisText, model, excelConversions);
+            if (result.Success) LogMetrics(ticketNumber, ticket.Carrier, outputFile, result);
+
+            return $"[{ticket.TicketNumber}] {ticket.Summary}\n" +
+                   $"Carrier: {ticket.Carrier} | Status: {ticket.Status} | Assignee: {ticket.Assignee}\n\n" +
+                   $"{analysisText}\n\n(Saved: {outputFile})";
+        }
+
+        // ---------------------------------------------------------------------------
         // Bug commonality check — is this bug pattern occurring in other carriers/states?
         // ---------------------------------------------------------------------------
         private static readonly HashSet<string> UsStateCodes = new HashSet<string> {
@@ -579,8 +868,9 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine("IMPORTANT — READ IN THIS ORDER:");
             sb.AppendLine("1. Ticket status and summary (tells you the current state)");
             sb.AppendLine("2. Comments (contain the REAL story — root causes, fixes, decisions)");
-            sb.AppendLine("3. Linked Bugs (may reveal blockers or root causes not in this ticket's own comments)");
-            sb.AppendLine("4. Attachments (supporting evidence only — do NOT base your analysis primarily on attachment content)");
+            sb.AppendLine("3. Worklogs (worklog comments often contain investigation notes, root causes, or decisions not repeated in the ticket's comments — treat as a real source, not just time tracking)");
+            sb.AppendLine("4. Linked Bugs (may reveal blockers or root causes not in this ticket's own comments)");
+            sb.AppendLine("5. Attachments (supporting evidence only — do NOT base your analysis primarily on attachment content)");
             sb.AppendLine();
             sb.AppendLine($"## Ticket: {ticket.TicketNumber}");
             sb.AppendLine($"- **Summary:** {ticket.Summary}");
@@ -600,6 +890,12 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine();
             sb.AppendLine("## Linked Bugs");
             sb.AppendLine(BuildLinkedBugsSection(ticket.LinkedBugs));
+            sb.AppendLine();
+            sb.AppendLine("## Worklogs (comments may contain investigation notes / root causes — read for content, not just time spent)");
+            sb.AppendLine(BuildWorklogsSection(ticket.Worklogs));
+            sb.AppendLine();
+            sb.AppendLine("## Effort & Schedule (⚠ flags are pre-computed — use them to judge if the ticket is running behind and where)");
+            sb.AppendLine(BuildScheduleSection(ticket.Schedule));
             sb.AppendLine();
             sb.AppendLine("## Description");
             sb.AppendLine(ticket.Description);
@@ -626,6 +922,7 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine("  * Waiting-Carrier → state what is waiting and from whom");
             sb.AppendLine("  * In-Progress → state what is actively being worked on");
             sb.AppendLine("  * Never say 'no immediate action required' unless the ticket is fully closed");
+            sb.AppendLine("  * If the Effort & Schedule section shows an OVER ESTIMATE, MISSED TARGET DATE, or STALLED flag, mention it and use the Dev/QA logged-time split plus the ticket status to hint at WHERE the hold-up likely is (e.g. heavy Dev time with no QA time logged and a QA-Ready-adjacent status → Dev hasn't actually handed off yet; heavy QA time logged in a Corrections/QA status → bugs are recurring in QA; Waiting-Carrier status plus stalled → the hold-up is with the carrier, not us). Don't over-claim — say \"likely\" and name the specific signal that suggests it.");
             sb.AppendLine("- Open Items rules:");
             sb.AppendLine("  * List ONLY concrete pending actions derived from the comments — not generic advice");
             sb.AppendLine("  * Reference specific issue numbers, fields, or actions from the comments");
@@ -672,6 +969,9 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine($"- **Summary:** {ticket.Summary}");
             sb.AppendLine($"- **Created:** {ticket.Created} | **Updated:** {ticket.Updated}");
             sb.AppendLine();
+            sb.AppendLine("## Effort & Schedule");
+            sb.AppendLine(BuildScheduleSection(ticket.Schedule));
+            sb.AppendLine();
             sb.AppendLine("## Description");
             sb.AppendLine(ticket.Description);
             sb.AppendLine();
@@ -684,6 +984,9 @@ namespace JiraWorklogViewer.Services
             sb.AppendLine();
             sb.AppendLine("## Linked Bugs");
             sb.AppendLine(BuildLinkedBugsSection(ticket.LinkedBugs));
+            sb.AppendLine();
+            sb.AppendLine("## Worklogs");
+            sb.AppendLine(BuildWorklogsSection(ticket.Worklogs));
             sb.AppendLine();
             sb.AppendLine("## Attachments");
             foreach (var att in ticket.Attachments)
@@ -885,6 +1188,8 @@ namespace JiraWorklogViewer.Services
         public string Carrier { get; set; }
         public List<JiraFetchAttachment> Attachments { get; set; } = new List<JiraFetchAttachment>();
         public List<JiraFetchComment> Comments { get; set; } = new List<JiraFetchComment>();
+        public List<JiraFetchWorklog> Worklogs { get; set; } = new List<JiraFetchWorklog>();
+        public JiraFetchScheduleInfo Schedule { get; set; }
         public List<JiraFetchLinkedBug> LinkedBugs { get; set; } = new List<JiraFetchLinkedBug>();
         public string OutputDir { get; set; }
         public string AttachmentDir { get; set; }
@@ -949,6 +1254,53 @@ namespace JiraWorklogViewer.Services
         public string Body { get; set; }
     }
 
+    public class JiraFetchWorklog
+    {
+        public string Author { get; set; }
+        public string Started { get; set; }
+        public string TimeSpent { get; set; }
+        public int TimeSpentSeconds { get; set; }
+        public string Comment { get; set; }
+    }
+
+    /// <summary>
+    /// Effort estimates (Dev/QA/Total), logged-time split (by matching worklog author against the
+    /// Programmer/Tester fields — a heuristic, since Jira doesn't tag worklog entries by type),
+    /// target dates, and derived over-estimate/missed-date/stalled flags.
+    /// </summary>
+    public class JiraFetchScheduleInfo
+    {
+        public double? DevEstimateHours { get; set; }
+        public double? QaEstimateHours { get; set; }
+        public double? TotalEstimateHours { get; set; }
+
+        public int TotalTimeSpentSeconds { get; set; }
+        public int DevTimeSpentSeconds { get; set; }
+        public int QaTimeSpentSeconds { get; set; }
+        public int OtherTimeSpentSeconds { get; set; }
+
+        public string Programmer { get; set; }
+        public string Tester { get; set; }
+
+        public string SpecsReceived { get; set; }
+        public string DateScheduled { get; set; }
+        public string QaStartDate { get; set; }
+        public string QaDeliveryDate { get; set; }
+        public string DevDueDate { get; set; }
+        public string QaDueDate { get; set; }
+        public string DueDate { get; set; }
+
+        public bool IsDone { get; set; }
+        public string LastActivityDate { get; set; }
+        public int BusinessDaysSinceActivity { get; set; }
+
+        public bool DevOverEstimate { get; set; }
+        public bool QaOverEstimate { get; set; }
+        public bool TotalOverEstimate { get; set; }
+        public List<string> MissedTargetDates { get; set; } = new List<string>();
+        public bool IsStalled { get; set; }
+    }
+
     public class JiraFetchSimilarTickets
     {
         public List<JiraFetchMatch> JiraMatches { get; set; } = new List<JiraFetchMatch>();
@@ -991,6 +1343,35 @@ namespace JiraWorklogViewer.Services
         public object description { get; set; }
         public List<JiraAttachmentRaw> attachment { get; set; }
         public List<JiraIssueLinkRaw> issuelinks { get; set; }
+        public JiraTimeTrackingRaw timetracking { get; set; }
+        public string duedate { get; set; }
+        public List<JiraPersonRaw> customfield_11192 { get; set; }  // Programmer
+        public List<JiraPersonRaw> customfield_11193 { get; set; }  // Tester
+        public JiraCustomFieldOptionRaw customfield_15528 { get; set; }  // Estimated DEV Effort (hrs)
+        public JiraCustomFieldOptionRaw customfield_15527 { get; set; }  // Estimated QA Effort (hrs)
+        public JiraCustomFieldOptionRaw customfield_12725 { get; set; }  // Estimated Effort (Hrs) — total
+        public double? customfield_11639 { get; set; }                  // Estimated Effort (hrs) — legacy total
+        public string customfield_11702 { get; set; }  // Specs Received
+        public string customfield_11637 { get; set; }  // Date Scheduled
+        public string customfield_11690 { get; set; }  // QA start date
+        public string customfield_11196 { get; set; }  // QA Delivery Date
+        public string customfield_12100 { get; set; }  // DEV due date
+        public string customfield_12101 { get; set; }  // QA due date
+    }
+
+    public class JiraTimeTrackingRaw
+    {
+        public string originalEstimate { get; set; }
+        public int? originalEstimateSeconds { get; set; }
+        public string remainingEstimate { get; set; }
+        public int? remainingEstimateSeconds { get; set; }
+        public string timeSpent { get; set; }
+        public int? timeSpentSeconds { get; set; }
+    }
+
+    public class JiraCustomFieldOptionRaw
+    {
+        public string value { get; set; }
     }
 
     public class JiraStatusRaw
@@ -1039,6 +1420,21 @@ namespace JiraWorklogViewer.Services
         public JiraPersonRaw author { get; set; }
         public string created { get; set; }
         public object body { get; set; }
+    }
+
+    public class JiraWorklogPageRaw
+    {
+        public List<JiraWorklogRaw> worklogs { get; set; }
+        public int total { get; set; }
+    }
+
+    public class JiraWorklogRaw
+    {
+        public JiraPersonRaw author { get; set; }
+        public string started { get; set; }
+        public string timeSpent { get; set; }
+        public int timeSpentSeconds { get; set; }
+        public object comment { get; set; }
     }
 
     public class JiraSearchRaw

@@ -31,6 +31,8 @@ namespace JiraWorklogViewer.Services
 
         public bool IsConfigured => !string.IsNullOrWhiteSpace(_profileName);
 
+        public string ProfileName => _profileName;
+
         public async Task<OllamaAnalysisResult> AnalyzeAsync(
             string prompt,
             string displayModelName,
