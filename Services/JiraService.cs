@@ -235,6 +235,129 @@ namespace JiraWorklogViewer.Services
             return GroupWorklogsByDate(worklogs);
         }
 
+        // ───────── DSU meeting: other users ─────────
+
+        public async Task<List<JiraUserInfo>> SearchUsersAsync(string query)
+        {
+            var users = new List<JiraUserInfo>();
+            if (string.IsNullOrWhiteSpace(query)) return users;
+
+            var url = string.Format("{0}/rest/api/3/user/search?query={1}&maxResults=30",
+                _baseUrl, Uri.EscapeDataString(query.Trim()));
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception("User search failed: " + await response.Content.ReadAsStringAsync());
+
+            var arr = Newtonsoft.Json.Linq.JArray.Parse(await response.Content.ReadAsStringAsync());
+            foreach (var u in arr)
+            {
+                // Skip app/bot accounts and deactivated users
+                if ((string)u["accountType"] != "atlassian") continue;
+                if (u["active"] != null && !(bool)u["active"]) continue;
+                users.Add(new JiraUserInfo
+                {
+                    AccountId = (string)u["accountId"],
+                    DisplayName = (string)u["displayName"],
+                    Email = (string)u["emailAddress"]
+                });
+            }
+            return users.OrderBy(u => u.DisplayName).ToList();
+        }
+
+        /// <summary>
+        /// Tickets a given user touched on one day: tickets where they logged work,
+        /// plus tickets whose status they changed.
+        /// </summary>
+        public async Task<List<UserDayTicket>> GetUserDayActivityAsync(string accountId, DateTime day)
+        {
+            var result = new Dictionary<string, UserDayTicket>();
+            string d0 = day.Date.ToString("yyyy-MM-dd");
+            string d1 = day.Date.AddDays(1).ToString("yyyy-MM-dd");
+
+            string jql = string.Format(
+                "(worklogAuthor = \"{0}\" AND worklogDate = \"{1}\") OR (status CHANGED BY \"{0}\" DURING (\"{1}\", \"{2}\")) ORDER BY updated DESC",
+                accountId, d0, d1);
+            var searchUrl = string.Format(
+                "{0}/rest/api/3/search/jql?jql={1}&fields=summary,status,worklog&maxResults=100",
+                _baseUrl, Uri.EscapeDataString(jql));
+
+            var response = await _httpClient.GetAsync(searchUrl);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception("Failed to search issues: " + await response.Content.ReadAsStringAsync());
+
+            var searchResult = JsonConvert.DeserializeObject<JiraSearchResponse>(await response.Content.ReadAsStringAsync());
+            if (searchResult.issues == null) return new List<UserDayTicket>();
+
+            foreach (var issue in searchResult.issues)
+            {
+                var ticket = new UserDayTicket
+                {
+                    Key = issue.key,
+                    Summary = issue.fields.summary,
+                    Status = issue.fields.status != null ? issue.fields.status.name : string.Empty
+                };
+
+                // Worklogs by this user on this day
+                List<JiraWorklog> raw;
+                if (issue.fields.worklog != null && issue.fields.worklog.total > 20)
+                {
+                    var wlResp = await _httpClient.GetAsync(
+                        string.Format("{0}/rest/api/3/issue/{1}/worklog", _baseUrl, issue.key));
+                    raw = wlResp.IsSuccessStatusCode
+                        ? JsonConvert.DeserializeObject<JiraWorklogContainer>(await wlResp.Content.ReadAsStringAsync()).worklogs
+                        : null;
+                }
+                else
+                {
+                    raw = issue.fields.worklog != null ? issue.fields.worklog.worklogs : null;
+                }
+
+                if (raw != null)
+                {
+                    foreach (var wl in raw)
+                    {
+                        if (wl.author == null || wl.author.accountId != accountId) continue;
+                        var entry = ConvertToWorklogEntry(wl, issue.key, issue.fields.summary);
+                        if (entry.Started.Date != day.Date) continue;
+                        ticket.TimeSpentSeconds += entry.TimeSpentSeconds;
+                        if (!string.IsNullOrWhiteSpace(entry.Comment))
+                            ticket.WorklogComments.Add(entry.Comment);
+                    }
+                }
+
+                // Status changes by this user on this day
+                int startAt = 0;
+                while (true)
+                {
+                    var clResp = await _httpClient.GetAsync(string.Format(
+                        "{0}/rest/api/3/issue/{1}/changelog?startAt={2}&maxResults=100", _baseUrl, issue.key, startAt));
+                    if (!clResp.IsSuccessStatusCode) break;
+                    var cl = JsonConvert.DeserializeObject<JiraChangelogResponse>(await clResp.Content.ReadAsStringAsync());
+                    if (cl == null || cl.values == null || cl.values.Count == 0) break;
+
+                    foreach (var entry in cl.values)
+                    {
+                        if (entry.items == null || entry.author == null || entry.author.accountId != accountId) continue;
+                        var created = TryParseDate(entry.created);
+                        if (!created.HasValue || created.Value.Date != day.Date) continue;
+                        foreach (var item in entry.items)
+                        {
+                            if (item.field != null && item.field.ToLower() == "status")
+                                ticket.StatusChanges.Add(string.Format("{0} → {1}", item.fromString, item.toString));
+                        }
+                    }
+
+                    startAt += cl.values.Count;
+                    if (cl.isLast) break;
+                }
+
+                if (ticket.TimeSpentSeconds > 0 || ticket.StatusChanges.Count > 0)
+                    result[ticket.Key] = ticket;
+            }
+
+            return result.Values.OrderBy(t => t.Key).ToList();
+        }
+
         private async Task<List<WorklogEntry>> GetWorklogsForIssueAsync(string issueKey)
         {
             var entries = new List<WorklogEntry>();

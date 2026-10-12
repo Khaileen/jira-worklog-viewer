@@ -1,0 +1,211 @@
+<Window x:Class="JiraWorklogViewer.DsuMeetingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DSU Meeting"
+        Width="1200" Height="680"
+        MinWidth="950" MinHeight="450"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip"
+        Icon="app.ico">
+
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="240"/>
+            <ColumnDefinition Width="14"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Roster -->
+        <GroupBox Grid.Column="0" Header="Roster" Padding="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ListBox x:Name="lstRoster" SelectionChanged="LstRoster_SelectionChanged">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="✓" Foreground="SeaGreen" FontWeight="Bold" Width="16">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Hidden"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsDone}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding DisplayName}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsDone}" Value="True">
+                                                    <Setter Property="FontWeight" Value="Bold"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                    <Button x:Name="btnAddUser" Content="➕ Add User…" Height="28" Click="BtnAddUser_Click"/>
+                    <Button x:Name="btnRemoveUser" Content="Remove" Height="28" Margin="0,6,0,0"
+                            IsEnabled="False" Click="BtnRemoveUser_Click"/>
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!-- Selected user's day -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <WrapPanel Grid.Row="0" Margin="0,0,0,10">
+                <TextBlock Text="Yesterday:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <DatePicker x:Name="dpYesterday" Width="130" VerticalAlignment="Center"
+                            SelectedDateChanged="DpYesterday_SelectedDateChanged"/>
+                <TextBlock Text="Today:" VerticalAlignment="Center" Margin="14,0,8,0"/>
+                <DatePicker x:Name="dpToday" Width="130" VerticalAlignment="Center"
+                            SelectedDateChanged="DpYesterday_SelectedDateChanged"/>
+                <Button x:Name="btnRefresh" Content="↻ Refresh" Width="90" Height="26" Margin="10,0,0,0"
+                        Click="BtnRefresh_Click"/>
+                <TextBlock Text="Model:" VerticalAlignment="Center" Margin="24,0,6,0"/>
+                <ComboBox x:Name="cboModel" MinWidth="170" MaxWidth="260" Height="26" VerticalAlignment="Center"
+                          SelectionChanged="CboModel_SelectionChanged"/>
+                <TextBlock Text="AWS Profile:" VerticalAlignment="Center" Margin="12,0,4,0" FontSize="11" Foreground="Gray"/>
+                <TextBox x:Name="txtBedrockProfile" Width="90" Height="26" VerticalContentAlignment="Center" FontSize="11"
+                         ToolTip="AWS SSO profile name for Bedrock. Leave blank to use Ollama only."
+                         LostFocus="TxtBedrockProfile_LostFocus"/>
+                <Button x:Name="btnSummarizeAll" Content="✨ AI Summarize ALL" Width="150" Height="26" Margin="10,0,0,0"
+                        IsEnabled="False" Click="BtnSummarizeAll_Click"
+                        ToolTip="Load and AI-summarize every user on the roster, one after another. Switching users is locked while it runs."/>
+                <Button x:Name="btnCancelAi" Content="Cancel" Width="64" Height="26" Margin="6,0,0,0"
+                        IsEnabled="False" Click="BtnCancelAi_Click"/>
+                <Button x:Name="btnExport" Content="📄 Export DSU" Width="110" Height="26" Margin="14,0,0,0"
+                        Click="BtnExport_Click"
+                        ToolTip="Write all roster users' Yesterday/Today entries to a Markdown file in Downloads and open it in VS Code"/>
+                <TextBlock x:Name="txtUserHeader" FontWeight="SemiBold" FontSize="15"
+                           VerticalAlignment="Center" Margin="24,0,0,0"/>
+            </WrapPanel>
+
+            <GroupBox Grid.Row="1" Header="Yesterday" Padding="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*" MinWidth="280"/>
+                    </Grid.ColumnDefinitions>
+
+                    <DataGrid Grid.Column="0" x:Name="gridTickets" AutoGenerateColumns="False"
+                              IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              CanUserAddRows="False"
+                              SelectionChanged="GridTickets_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Ticket" Binding="{Binding Key}" Width="Auto"/>
+                            <DataGridTextColumn Header="Summary" Binding="{Binding Summary}" Width="*"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto"/>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeSpent}" Width="Auto"/>
+                            <DataGridTextColumn Header="Activity" Binding="{Binding Interaction}" Width="Auto"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="DSU entry (editable)" Margin="0,0,0,4" Foreground="Gray"/>
+                        <TextBox Grid.Row="1" x:Name="txtEntry" AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" IsEnabled="False"
+                                 TextChanged="TxtEntry_TextChanged"/>
+                        <WrapPanel Grid.Row="2" Margin="0,8,0,0">
+                            <Button x:Name="btnAddEntry" Content="➕ Add New Entry" Width="130" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnAddEntry_Click"
+                                    ToolTip="Add a ticket + work log text by hand for the selected user (not sent to Jira)"/>
+                            <Button x:Name="btnImprove" Content="✨ AI Improve" Width="110" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnImprove_Click"
+                                    ToolTip="Rewrite what is currently in the box as a clean one-liner (fixes spelling/grammar, expands shorthand, translates to English)"/>
+                            <Button x:Name="btnImproveAll" Content="✨ Improve ALL" Width="110" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnImproveAll_Click"
+                                    ToolTip="AI-improve every ticket in this grid for the selected user"/>
+                            <Button x:Name="btnReset" Content="↺ Reset" Width="90" Height="28"
+                                    IsEnabled="False" Click="BtnReset_Click"
+                                    ToolTip="Restore the original generated entry"/>
+                            <TextBlock x:Name="txtEdited" Text="edited" Foreground="DarkOrange"
+                                       VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
+                        </WrapPanel>
+                    </Grid>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Row="2" Header="Today" Padding="8" Margin="0,8,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*" MinWidth="280"/>
+                    </Grid.ColumnDefinitions>
+
+                    <DataGrid Grid.Column="0" x:Name="gridToday" AutoGenerateColumns="False"
+                              IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                              CanUserAddRows="False"
+                              SelectionChanged="GridTickets_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Ticket" Binding="{Binding Key}" Width="Auto"/>
+                            <DataGridTextColumn Header="Summary" Binding="{Binding Summary}" Width="*"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto"/>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeSpent}" Width="Auto"/>
+                            <DataGridTextColumn Header="Activity" Binding="{Binding Interaction}" Width="Auto"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="DSU entry (editable)" Margin="0,0,0,4" Foreground="Gray"/>
+                        <TextBox Grid.Row="1" x:Name="txtEntryToday" AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" IsEnabled="False"
+                                 TextChanged="TxtEntry_TextChanged"/>
+                        <WrapPanel Grid.Row="2" Margin="0,8,0,0">
+                            <Button x:Name="btnAddEntryToday" Content="➕ Add New Entry" Width="130" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnAddEntry_Click"
+                                    ToolTip="Add a ticket + work log text by hand for the selected user (not sent to Jira)"/>
+                            <Button x:Name="btnImproveToday" Content="✨ AI Improve" Width="110" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnImprove_Click"
+                                    ToolTip="Rewrite what is currently in the box as a clean one-liner (fixes spelling/grammar, expands shorthand, translates to English)"/>
+                            <Button x:Name="btnImproveAllToday" Content="✨ Improve ALL" Width="110" Height="28"
+                                    Margin="0,0,10,0" IsEnabled="False" Click="BtnImproveAll_Click"
+                                    ToolTip="AI-improve every ticket in this grid for the selected user"/>
+                            <Button x:Name="btnResetToday" Content="↺ Reset" Width="90" Height="28"
+                                    IsEnabled="False" Click="BtnReset_Click"
+                                    ToolTip="Restore the original generated entry"/>
+                            <TextBlock x:Name="txtEditedToday" Text="edited" Foreground="DarkOrange"
+                                       VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
+                        </WrapPanel>
+                    </Grid>
+                </Grid>
+            </GroupBox>
+
+            <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                <ProgressBar x:Name="progressBar" Height="4" Margin="0,0,0,4" Visibility="Collapsed"/>
+                <TextBlock x:Name="txtStatus" Foreground="Gray" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

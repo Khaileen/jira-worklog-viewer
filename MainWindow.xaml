@@ -335,6 +335,12 @@
                     ToolTip="Daily Stand-Up Generator"
                     Margin="0,0,0,10"
                     Click="BtnStandup_Click"/>
+            <Button x:Name="btnDsuMeeting"
+                    Style="{StaticResource FabStyle}"
+                    Content="👥"
+                    ToolTip="DSU Meeting"
+                    Margin="0,0,0,10"
+                    Click="BtnDsuMeeting_Click"/>
             <Button x:Name="btnDefense"
                     Style="{StaticResource FabStyle}"
                     Content="🛡"

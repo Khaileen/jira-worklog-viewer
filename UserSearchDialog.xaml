@@ -1,0 +1,41 @@
+<Window x:Class="JiraWorklogViewer.UserSearchDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add Users from Jira"
+        Width="480" Height="460"
+        MinWidth="400" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Icon="app.ico">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="txtQuery" Height="26" VerticalContentAlignment="Center"
+                     ToolTip="Name or email" KeyDown="TxtQuery_KeyDown"/>
+            <Button Grid.Column="1" x:Name="btnSearch" Content="Search" Width="80" Height="26"
+                    Margin="8,0,0,0" Click="BtnSearch_Click"/>
+        </Grid>
+
+        <ListBox Grid.Row="1" x:Name="lstResults" SelectionMode="Extended"
+                 DisplayMemberPath="Display" MouseDoubleClick="LstResults_MouseDoubleClick"/>
+
+        <TextBlock Grid.Row="2" x:Name="txtStatus" Margin="0,8,0,8" Foreground="Gray"
+                   Text="Search by name or email. Ctrl/Shift-click to select several."/>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnAdd" Content="Add Selected" Width="110" Height="28" Margin="0,0,8,0"
+                    IsEnabled="False" Click="BtnAdd_Click"/>
+            <Button Content="Cancel" Width="80" Height="28" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

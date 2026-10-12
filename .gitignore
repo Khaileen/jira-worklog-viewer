@@ -75,3 +75,9 @@ publish/
 
 # Settings file (local only)
 settings.json
+
+# Claude / local helper folders (never commit)
+.claude/
+me-thinks/
+me-deedz/
+me-unsee/

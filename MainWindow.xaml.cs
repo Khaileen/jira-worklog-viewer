@@ -510,6 +510,7 @@ namespace JiraWorklogViewer
             btnTracker.IsEnabled = enabled && _isConnected;
             btnStandup.IsEnabled = enabled && _isConnected;
             btnDefense.IsEnabled = enabled && _isConnected;
+            btnDsuMeeting.IsEnabled = enabled && _isConnected;
             btnJiraFetch.IsEnabled = enabled && _isConnected;
         }
 
@@ -980,6 +981,21 @@ namespace JiraWorklogViewer
             }
 
             var window = new StandupWindow(_jiraService, _ollamaService);
+            window.Owner = this;
+            window.Loaded += (s, e) => App.ApplyScale(window);
+            window.Show();
+        }
+
+        private void BtnDsuMeeting_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isConnected)
+            {
+                MessageBox.Show("Please connect to Jira first.", "Not Connected",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var window = new DsuMeetingWindow(_jiraService, _ollamaService);
             window.Owner = this;
             window.Loaded += (s, e) => App.ApplyScale(window);
             window.Show();
